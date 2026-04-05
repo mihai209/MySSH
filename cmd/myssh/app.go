@@ -341,6 +341,11 @@ func (a *App) ConnectProfile(id string) error {
 	return nil
 }
 
+func (a *App) ConnectLocalShell() error {
+	a.pendingHost = nil
+	return a.sshManager.ConnectLocalShell(a.ctx)
+}
+
 func (a *App) SendTerminalInput(input string) error {
 	return a.sshManager.SendInput(input)
 }

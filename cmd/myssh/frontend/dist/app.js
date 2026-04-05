@@ -35,6 +35,7 @@
     els.authMix = document.getElementById("auth-mix");
     els.statusText = document.getElementById("status-text");
     els.newProfile = document.getElementById("new-profile");
+    els.openLocal = document.getElementById("open-local");
     els.emptyAddButton = document.getElementById("empty-add-button");
     els.detailTitle = document.getElementById("detail-title");
     els.heroTitle = document.getElementById("hero-title");
@@ -93,6 +94,7 @@
   function bindEvents() {
     els.search.addEventListener("input", applyFilter);
     els.newProfile.addEventListener("click", openCreateModal);
+    els.openLocal.addEventListener("click", connectLocalShell);
     els.emptyAddButton.addEventListener("click", openCreateModal);
     els.closeModal.addEventListener("click", closeModal);
     els.cancelModal.addEventListener("click", closeModal);
@@ -222,7 +224,7 @@
     els.detailTitle.textContent = profile.name || "Machine";
     els.heroTitle.textContent = profile.name || "SSH Machine";
     els.heroCopy.textContent = "Connect opens a dedicated terminal workspace with loader, live output and autoreconnect.";
-    els.machineMeta.textContent = `${profile.username}@${profile.host}:${profile.port}`;
+    els.machineMeta.textContent = formatSessionTarget(profile);
     els.machineName.textContent = profile.name || "-";
     els.machineUsername.textContent = profile.username || "-";
     els.machineHost.textContent = profile.host || "-";
@@ -365,6 +367,27 @@
     }
   }
 
+  async function connectLocalShell() {
+    openTerminal({
+      name: "Local Terminal",
+      username: "local",
+      host: "localhost",
+      port: 0,
+    });
+    setTerminalLoader(true, "Opening local shell...");
+    setTerminalStatus("Connecting");
+    appendTerminalOutput("[MySSH] Opening local shell\r\n");
+
+    try {
+      await window.go.main.App.ConnectLocalShell();
+    } catch (error) {
+      setTerminalLoader(false);
+      setTerminalStatus("Error");
+      appendTerminalOutput(`[MySSH] Local shell error: ${String(error)}\r\n`);
+      setStatus(String(error), true);
+    }
+  }
+
   function updateSecurityCopy() {
     els.keySourceWrap.classList.add("hidden");
     els.keyPathWrap.classList.add("hidden");
@@ -474,6 +497,16 @@
     return "none";
   }
 
+  function formatSessionTarget(profile) {
+    if (!profile) {
+      return "Waiting for connection...";
+    }
+    if (profile.port && Number(profile.port) > 0) {
+      return `${profile.username}@${profile.host}:${profile.port}`;
+    }
+    return `${profile.username}@${profile.host}`;
+  }
+
   function setStatus(message, isError) {
     els.statusText.textContent = message;
     els.statusText.style.color = isError ? "#ff8da0" : "";
@@ -484,7 +517,7 @@
     state.terminalBuffer = "";
     els.terminalScreen.classList.remove("hidden");
     els.terminalTitle.textContent = profile.name || "SSH Session";
-    els.terminalSubtitle.textContent = `${profile.username}@${profile.host}:${profile.port}`;
+    els.terminalSubtitle.textContent = formatSessionTarget(profile);
     els.terminalTrust.classList.add("hidden");
     destroyTerminal();
     ensureTerminal();
@@ -520,7 +553,7 @@
 
     setTerminalStatus(status);
     els.terminalTitle.textContent = profile.name || "SSH Session";
-    els.terminalSubtitle.textContent = profile.host ? `${profile.username}@${profile.host}:${profile.port}` : "Waiting for connection...";
+    els.terminalSubtitle.textContent = profile.host ? formatSessionTarget(profile) : "Waiting for connection...";
 
     if (status === "connecting" || status === "reconnecting") {
       setTerminalLoader(true, message);

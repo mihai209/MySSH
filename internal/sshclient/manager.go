@@ -45,6 +45,10 @@ type connection struct {
 	client         *ssh.Client
 	session        *ssh.Session
 	stdin          io.WriteCloser
+	waitFn         func() error
+	resizeFn       func(cols int, rows int) error
+	closeFn        func() error
+	reconnect      bool
 	manualClose    bool
 	reconnectDelay time.Duration
 }
@@ -61,6 +65,7 @@ func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret st
 		secret:         secret,
 		passphrase:     passphrase,
 		connectSecret:  connectSecret,
+		reconnect:      true,
 		reconnectDelay: 3 * time.Second,
 	}
 
@@ -70,6 +75,39 @@ func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret st
 
 	m.emitStatus("connecting", profile, fmt.Sprintf("Connecting to %s...", profile.Host), 1)
 	if err := m.establish(ctx, conn, 1); err != nil {
+		m.mu.Lock()
+		if m.current == conn {
+			m.current = nil
+		}
+		m.mu.Unlock()
+		return err
+	}
+
+	return nil
+}
+
+func (m *Manager) ConnectLocalShell(ctx context.Context) error {
+	m.Disconnect()
+
+	profile := domain.Profile{
+		ID:       "local",
+		Name:     "Local Terminal",
+		Username: currentUsername(),
+		Host:     "localhost",
+		Port:     0,
+	}
+
+	conn := &connection{
+		profile:   profile,
+		reconnect: false,
+	}
+
+	m.mu.Lock()
+	m.current = conn
+	m.mu.Unlock()
+
+	m.emitStatus("connecting", profile, "Opening local shell...", 1)
+	if err := m.establishLocal(ctx, conn); err != nil {
 		m.mu.Lock()
 		if m.current == conn {
 			m.current = nil
@@ -98,13 +136,15 @@ func (m *Manager) Resize(cols int, rows int) error {
 	defer m.mu.Unlock()
 
 	if m.current == nil || m.current.session == nil {
-		return fmt.Errorf("no active ssh session")
+		if m.current == nil || m.current.resizeFn == nil {
+			return fmt.Errorf("no active terminal session")
+		}
 	}
 	if cols < 20 || rows < 5 {
 		return nil
 	}
 
-	return m.current.session.WindowChange(rows, cols)
+	return m.current.resizeFn(cols, rows)
 }
 
 func (m *Manager) Disconnect() {
@@ -120,11 +160,15 @@ func (m *Manager) Disconnect() {
 		return
 	}
 
-	if conn.session != nil {
-		_ = conn.session.Close()
-	}
-	if conn.client != nil {
-		_ = conn.client.Close()
+	if conn.closeFn != nil {
+		_ = conn.closeFn()
+	} else {
+		if conn.session != nil {
+			_ = conn.session.Close()
+		}
+		if conn.client != nil {
+			_ = conn.client.Close()
+		}
 	}
 
 	m.emitStatus("disconnected", conn.profile, "Disconnected.", 0)
@@ -139,11 +183,43 @@ func (m *Manager) establish(ctx context.Context, conn *connection, attempt int) 
 	conn.client = client
 	conn.session = session
 	conn.stdin = stdin
+	conn.waitFn = session.Wait
+	conn.resizeFn = func(cols int, rows int) error {
+		return session.WindowChange(rows, cols)
+	}
+	conn.closeFn = func() error {
+		if conn.session != nil {
+			_ = conn.session.Close()
+		}
+		if conn.client != nil {
+			return conn.client.Close()
+		}
+		return nil
+	}
 
 	m.emitStatus("connected", conn.profile, fmt.Sprintf("Connected to %s", conn.profile.Host), attempt)
 
 	go m.pipeOutput(stdout)
 	go m.pipeOutput(stderr)
+	go m.watchSession(ctx, conn)
+
+	return nil
+}
+
+func (m *Manager) establishLocal(ctx context.Context, conn *connection) error {
+	shell, master, waitFn, resizeFn, closeFn, err := startLocalShell()
+	if err != nil {
+		return err
+	}
+
+	conn.stdin = master
+	conn.waitFn = waitFn
+	conn.resizeFn = resizeFn
+	conn.closeFn = closeFn
+
+	m.emitStatus("connected", conn.profile, fmt.Sprintf("Local shell ready: %s", shell), 1)
+
+	go m.pipeOutput(master)
 	go m.watchSession(ctx, conn)
 
 	return nil
@@ -165,7 +241,10 @@ func (m *Manager) pipeOutput(reader io.Reader) {
 }
 
 func (m *Manager) watchSession(ctx context.Context, conn *connection) {
-	err := conn.session.Wait()
+	if conn.waitFn == nil {
+		return
+	}
+	err := conn.waitFn()
 
 	m.mu.Lock()
 	stillCurrent := m.current == conn
@@ -180,11 +259,27 @@ func (m *Manager) watchSession(ctx context.Context, conn *connection) {
 		return
 	}
 
+	if !conn.reconnect {
+		m.mu.Lock()
+		if m.current == conn {
+			m.current = nil
+		}
+		m.mu.Unlock()
+		if err != nil {
+			m.emitStatus("disconnected", conn.profile, "Terminal session ended.", 0)
+		}
+		return
+	}
+
 	if err != nil {
 		m.emitStatus("reconnecting", conn.profile, fmt.Sprintf("Connection dropped. Reconnecting to %s...", conn.profile.Host), 0)
 	}
 
-	_ = conn.client.Close()
+	if conn.closeFn != nil {
+		_ = conn.closeFn()
+	} else {
+		_ = conn.client.Close()
+	}
 
 	for attempt := 1; ; attempt++ {
 		time.Sleep(conn.reconnectDelay)
@@ -206,6 +301,13 @@ func (m *Manager) watchSession(ctx context.Context, conn *connection) {
 
 		m.emitStatus("reconnecting", conn.profile, fmt.Sprintf("Reconnect failed. Retrying %s...", conn.profile.Host), attempt)
 	}
+}
+
+func currentUsername() string {
+	if username := os.Getenv("USER"); username != "" {
+		return username
+	}
+	return "local"
 }
 
 func (m *Manager) emitStatus(state string, profile domain.Profile, message string, attempt int) {
