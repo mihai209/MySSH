@@ -491,16 +491,7 @@ button:disabled {
 }
 
 .terminal-output .xterm {
-  height: 100%;
   padding: 10px 12px;
-}
-
-.terminal-output .xterm-rows {
-  line-height: 1 !important;
-}
-
-.terminal-output .xterm-screen canvas {
-  top: 0 !important;
 }
 
 .modal {

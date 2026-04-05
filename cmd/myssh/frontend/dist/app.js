@@ -400,6 +400,7 @@
     els.terminalTitle.textContent = profile.name || "SSH Session";
     els.terminalSubtitle.textContent = `${profile.username}@${profile.host}:${profile.port}`;
     els.terminalTrust.classList.add("hidden");
+    destroyTerminal();
     ensureTerminal();
     state.terminal.reset();
     state.terminal.focus();
@@ -411,6 +412,7 @@
     setTerminalLoader(false);
     els.terminalTrust.classList.add("hidden");
     setTerminalStatus("Idle");
+    destroyTerminal();
     try {
       await window.go.main.App.DisconnectTerminal();
     } catch (_) {
@@ -537,6 +539,29 @@
     const cols = state.terminal.cols;
     const rows = state.terminal.rows;
     window.go.main.App.ResizeTerminal(cols, rows).catch(() => {});
+  }
+
+  function destroyTerminal() {
+    if (state.webglAddon) {
+      try {
+        state.webglAddon.dispose();
+      } catch (_) {
+        // ignore dispose errors
+      }
+      state.webglAddon = null;
+    }
+
+    if (state.terminal) {
+      try {
+        state.terminal.dispose();
+      } catch (_) {
+        // ignore dispose errors
+      }
+      state.terminal = null;
+    }
+
+    state.fitAddon = null;
+    els.terminalContainer.innerHTML = "";
   }
 
   function tryEnableWebgl() {

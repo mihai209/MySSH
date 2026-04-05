@@ -231,14 +231,16 @@ func dial(profile domain.Profile, secret string) (*ssh.Client, *ssh.Session, io.
 		Timeout:         15 * time.Second,
 	}
 
+	agentSignerCount := 0
 	switch profile.AuthKind {
 	case domain.AuthPassword:
 		config.Auth = []ssh.AuthMethod{ssh.Password(secret)}
 	case domain.AuthAgent:
-		auth, err := agentAuthMethod()
+		auth, signerCount, err := agentAuthMethod()
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
+		agentSignerCount = signerCount
 		config.Auth = []ssh.AuthMethod{auth}
 	default:
 		return nil, nil, nil, nil, nil, fmt.Errorf("connect currently supports only password and agent auth")
@@ -247,6 +249,9 @@ func dial(profile domain.Profile, secret string) (*ssh.Client, *ssh.Session, io.
 	address := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
 	client, err := ssh.Dial("tcp", address, config)
 	if err != nil {
+		if profile.AuthKind == domain.AuthAgent {
+			return nil, nil, nil, nil, nil, fmt.Errorf("ssh-agent auth failed (%d keys loaded). Make sure the correct key is loaded with ssh-add and that the server accepts it: %w", agentSignerCount, err)
+		}
 		return nil, nil, nil, nil, nil, err
 	}
 
@@ -296,19 +301,27 @@ func dial(profile domain.Profile, secret string) (*ssh.Client, *ssh.Session, io.
 	return client, session, stdin, stdout, stderr, nil
 }
 
-func agentAuthMethod() (ssh.AuthMethod, error) {
+func agentAuthMethod() (ssh.AuthMethod, int, error) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
-		return nil, fmt.Errorf("SSH_AUTH_SOCK is not set; no ssh-agent available")
+		return nil, 0, fmt.Errorf("SSH_AUTH_SOCK is not set; no ssh-agent available")
 	}
 
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
-		return nil, fmt.Errorf("connect to ssh-agent: %w", err)
+		return nil, 0, fmt.Errorf("connect to ssh-agent: %w", err)
 	}
 
 	agentClient := sshagent.NewClient(conn)
-	return ssh.PublicKeysCallback(agentClient.Signers), nil
+	signers, err := agentClient.Signers()
+	if err != nil {
+		return nil, 0, fmt.Errorf("read keys from ssh-agent: %w", err)
+	}
+	if len(signers) == 0 {
+		return nil, 0, fmt.Errorf("ssh-agent has no loaded keys; run ssh-add first")
+	}
+
+	return ssh.PublicKeys(signers...), len(signers), nil
 }
 
 func knownHostsCallback() (ssh.HostKeyCallback, error) {
