@@ -23,6 +23,9 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
 
     steps:
       - name: Checkout
@@ -33,6 +36,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Restore Go build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ runner.os }}-go-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('cmd/**', 'internal/**') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('go.mod', 'go.sum') }}-
+            ${{ runner.os }}-go-
 
       - name: Install GUI build dependencies
         run: |
