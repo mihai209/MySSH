@@ -425,10 +425,11 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
+  --sftp-width: 420px;
 }
 
 .workspace-body.split {
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) 10px minmax(320px, var(--sftp-width));
 }
 
 .terminal-pane {
@@ -447,6 +448,19 @@ button:disabled {
   border-radius: 22px;
   background: rgba(12, 22, 34, 0.94);
   border: 1px solid rgba(79, 179, 255, 0.12);
+}
+
+.split-resizer {
+  width: 10px;
+  border-radius: 999px;
+  background: rgba(79, 179, 255, 0.08);
+  border: 1px solid rgba(79, 179, 255, 0.14);
+  cursor: col-resize;
+}
+
+.split-resizer:hover,
+.split-resizer.dragging {
+  background: rgba(79, 179, 255, 0.18);
 }
 
 .sftp-pane-header {
@@ -583,10 +597,36 @@ button:disabled {
 
 .sftp-toolbar {
   display: flex;
+  gap: 12px;
+  align-items: stretch;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .sftp-path-card {
-  width: 100%;
+  flex: 1;
+}
+
+.sftp-bulk-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sftp-dropzone {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px dashed rgba(79, 179, 255, 0.24);
+  background: rgba(79, 179, 255, 0.05);
+  color: var(--muted);
+  text-align: center;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.sftp-dropzone.active {
+  background: rgba(79, 179, 255, 0.12);
+  border-color: rgba(79, 179, 255, 0.5);
+  color: var(--text);
 }
 
 .sftp-list {
@@ -598,13 +638,23 @@ button:disabled {
 
 .sftp-entry {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 14px;
   align-items: center;
   padding: 14px 16px;
   border-radius: 18px;
   background: rgba(17, 28, 41, 0.9);
   border: 1px solid var(--stroke-soft);
+}
+
+.sftp-entry.selected {
+  border-color: rgba(79, 179, 255, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(79, 179, 255, 0.2);
+}
+
+.sftp-entry-check {
+  width: 18px;
+  height: 18px;
 }
 
 .sftp-entry-main {
@@ -655,6 +705,10 @@ button:disabled {
 @media (max-width: 1280px) {
   .workspace-body.split {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .split-resizer {
+    display: none;
   }
 }
 

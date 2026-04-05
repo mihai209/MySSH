@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -409,6 +410,24 @@ func (a *App) UploadSFTPFileToPath(sessionID string, remoteDir string) (SFTPDire
 	}
 
 	dir, err := a.sftpManager.Upload(strings.TrimSpace(sessionID), filePath, strings.TrimSpace(remoteDir))
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) UploadSFTPContent(sessionID string, remoteDir string, fileName string, contentBase64 string) (SFTPDirectoryDTO, error) {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return SFTPDirectoryDTO{}, fmt.Errorf("file name is required")
+	}
+
+	content, err := base64.StdEncoding.DecodeString(strings.TrimSpace(contentBase64))
+	if err != nil {
+		return SFTPDirectoryDTO{}, fmt.Errorf("decode upload content: %w", err)
+	}
+
+	dir, err := a.sftpManager.UploadContent(strings.TrimSpace(sessionID), fileName, content, strings.TrimSpace(remoteDir))
 	if err != nil {
 		return SFTPDirectoryDTO{}, err
 	}

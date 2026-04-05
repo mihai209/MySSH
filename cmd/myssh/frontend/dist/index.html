@@ -217,6 +217,7 @@
         <div class="terminal-pane">
           <div class="terminal-output" id="terminal-container"></div>
         </div>
+        <div class="split-resizer hidden" id="split-resizer" role="separator" aria-orientation="vertical" tabindex="0"></div>
         <aside class="sftp-pane hidden" id="sftp-screen">
           <header class="sftp-pane-header">
             <div>
@@ -244,6 +245,15 @@
               <span>Path</span>
               <p id="sftp-path">/</p>
             </div>
+            <div class="sftp-bulk-actions">
+              <button class="ghost-button" id="sftp-select-all">Select All</button>
+              <button class="ghost-button" id="sftp-download-selected">Download Selected</button>
+              <button class="danger-button" id="sftp-delete-selected">Delete Selected</button>
+            </div>
+          </div>
+
+          <div class="sftp-dropzone" id="sftp-dropzone">
+            Drop files here to upload into the current folder.
           </div>
 
           <div class="sftp-list" id="sftp-list"></div>

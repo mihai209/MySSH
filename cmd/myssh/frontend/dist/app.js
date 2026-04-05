@@ -19,7 +19,10 @@
       path: "",
       parent: "",
       entries: [],
+      selectedPaths: [],
     },
+    splitWidth: 420,
+    resizeActive: false,
     terminalBuffer: "",
     pendingTerminalWrite: "",
     terminalFlushScheduled: false,
@@ -118,6 +121,11 @@
     els.sftpUpload = document.getElementById("sftp-upload");
     els.sftpMkdir = document.getElementById("sftp-mkdir");
     els.sftpClose = document.getElementById("sftp-close");
+    els.sftpSelectAll = document.getElementById("sftp-select-all");
+    els.sftpDownloadSelected = document.getElementById("sftp-download-selected");
+    els.sftpDeleteSelected = document.getElementById("sftp-delete-selected");
+    els.sftpDropzone = document.getElementById("sftp-dropzone");
+    els.splitResizer = document.getElementById("split-resizer");
     els.toastStack = document.getElementById("toast-stack");
     els.workspaceBody = document.querySelector(".workspace-body");
     els.connectSecret = document.getElementById("connect-secret");
@@ -151,6 +159,14 @@
     els.sftpUpload.addEventListener("click", uploadToSFTP);
     els.sftpMkdir.addEventListener("click", mkdirInSFTP);
     els.sftpClose.addEventListener("click", closeSFTP);
+    els.sftpSelectAll.addEventListener("click", toggleSelectAllSFTP);
+    els.sftpDownloadSelected.addEventListener("click", downloadSelectedSFTP);
+    els.sftpDeleteSelected.addEventListener("click", deleteSelectedSFTP);
+    els.sftpDropzone.addEventListener("dragenter", handleSFTPDragEnter);
+    els.sftpDropzone.addEventListener("dragover", handleSFTPDragOver);
+    els.sftpDropzone.addEventListener("dragleave", handleSFTPDragLeave);
+    els.sftpDropzone.addEventListener("drop", handleSFTPDrop);
+    els.splitResizer.addEventListener("mousedown", startSplitResize);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -164,6 +180,8 @@
     }
 
     window.addEventListener("resize", debounceResizeTerminal);
+    window.addEventListener("mousemove", handleSplitResize);
+    window.addEventListener("mouseup", stopSplitResize);
     updateGpuButton();
   }
 
@@ -453,6 +471,7 @@
     state.sftp.path = "";
     state.sftp.parent = "";
     state.sftp.entries = [];
+    state.sftp.selectedPaths = [];
     syncSFTPView();
     setSFTPLoader(true, `Opening SFTP for ${profile.host}...`);
 
@@ -735,6 +754,8 @@
   function syncSFTPView() {
     els.sftpScreen.classList.toggle("hidden", !state.sftp.visible);
     els.workspaceBody.classList.toggle("split", state.sftp.visible);
+    els.splitResizer.classList.toggle("hidden", !state.sftp.visible);
+    els.workspaceBody.style.setProperty("--sftp-width", `${state.splitWidth}px`);
     if (!state.sftp.visible) {
       els.terminalSFTPToggle.textContent = "SFTP";
       return;
@@ -745,6 +766,15 @@
     els.sftpPath.textContent = state.sftp.path || "Waiting for path...";
     els.sftpUp.disabled = !state.sftp.parent;
     renderSFTPEntries();
+  }
+
+  function syncSFTPBulkActions() {
+    const hasEntries = state.sftp.entries.length > 0;
+    const selectedCount = state.sftp.selectedPaths.length;
+    els.sftpSelectAll.disabled = !hasEntries;
+    els.sftpSelectAll.textContent = selectedCount === state.sftp.entries.length && hasEntries ? "Clear Selection" : "Select All";
+    els.sftpDownloadSelected.disabled = selectedCount === 0;
+    els.sftpDeleteSelected.disabled = selectedCount === 0;
   }
 
   function setSFTPLoader(visible, text) {
@@ -759,6 +789,9 @@
     state.sftp.path = directory.path;
     state.sftp.parent = directory.parent;
     state.sftp.entries = directory.entries || [];
+    state.sftp.selectedPaths = state.sftp.selectedPaths.filter((path) =>
+      state.sftp.entries.some((entry) => entry.path === path),
+    );
     state.sftp.visible = true;
     syncSFTPView();
   }
@@ -770,13 +803,18 @@
       empty.className = "empty-state";
       empty.textContent = "No files in this folder.";
       els.sftpList.appendChild(empty);
+      syncSFTPBulkActions();
       return;
     }
 
     state.sftp.entries.forEach((entry) => {
       const row = document.createElement("div");
       row.className = `sftp-entry${entry.isDir ? " sftp-entry-dir" : ""}`;
+      if (state.sftp.selectedPaths.includes(entry.path)) {
+        row.classList.add("selected");
+      }
       row.innerHTML = `
+        <input class="sftp-entry-check" type="checkbox" data-sftp-select="${escapeHtml(entry.path)}" ${state.sftp.selectedPaths.includes(entry.path) ? "checked" : ""} />
         <div class="sftp-entry-main">
           <div class="sftp-entry-name">${escapeHtml(entry.name)}</div>
           <div class="sftp-entry-meta">${escapeHtml(entry.mode)} • ${entry.isDir ? "directory" : `${entry.size} bytes`}</div>
@@ -795,10 +833,14 @@
         }
         downloadSFTPFile(entry.path);
       });
+      row.querySelector("[data-sftp-select]").addEventListener("change", (event) => {
+        toggleSFTPSelection(entry.path, event.target.checked);
+      });
       row.querySelector("[data-sftp-rename]").addEventListener("click", () => renameSFTPEntry(entry));
       row.querySelector("[data-sftp-delete]").addEventListener("click", () => deleteSFTPEntry(entry));
       els.sftpList.appendChild(row);
     });
+    syncSFTPBulkActions();
   }
 
   async function closeSFTP() {
@@ -815,9 +857,118 @@
       path: "",
       parent: "",
       entries: [],
+      selectedPaths: [],
     };
     syncSFTPView();
     showToast("SFTP session closed.");
+  }
+
+  function toggleSFTPSelection(path, checked) {
+    if (checked) {
+      if (!state.sftp.selectedPaths.includes(path)) {
+        state.sftp.selectedPaths.push(path);
+      }
+    } else {
+      state.sftp.selectedPaths = state.sftp.selectedPaths.filter((item) => item !== path);
+    }
+    renderSFTPEntries();
+  }
+
+  function toggleSelectAllSFTP() {
+    if (state.sftp.selectedPaths.length === state.sftp.entries.length) {
+      state.sftp.selectedPaths = [];
+    } else {
+      state.sftp.selectedPaths = state.sftp.entries.map((entry) => entry.path);
+    }
+    renderSFTPEntries();
+  }
+
+  async function downloadSelectedSFTP() {
+    const selected = state.sftp.entries.filter((entry) => state.sftp.selectedPaths.includes(entry.path) && !entry.isDir);
+    if (!selected.length) {
+      showToast("Select at least one file to download.", true);
+      return;
+    }
+    setSFTPLoader(true, `Downloading ${selected.length} selected file(s)...`);
+    try {
+      for (const entry of selected) {
+        await window.go.main.App.DownloadSFTPFile(state.sftp.sessionId, entry.path);
+      }
+      showToast(`Downloaded ${selected.length} file(s).`);
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function deleteSelectedSFTP() {
+    const selected = state.sftp.entries.filter((entry) => state.sftp.selectedPaths.includes(entry.path));
+    if (!selected.length) {
+      showToast("Select entries to delete.", true);
+      return;
+    }
+    const confirmed = window.confirm(`Delete ${selected.length} selected item(s)?`);
+    if (!confirmed) {
+      return;
+    }
+    setSFTPLoader(true, `Deleting ${selected.length} selected item(s)...`);
+    try {
+      for (const entry of selected) {
+        await window.go.main.App.DeleteSFTPPath(state.sftp.sessionId, entry.path, entry.isDir);
+      }
+      state.sftp.selectedPaths = [];
+      await refreshSFTP();
+      showToast(`Deleted ${selected.length} item(s).`);
+    } catch (error) {
+      showToast(String(error), true);
+      setSFTPLoader(false);
+    }
+  }
+
+  function handleSFTPDragEnter(event) {
+    event.preventDefault();
+    els.sftpDropzone.classList.add("active");
+  }
+
+  function handleSFTPDragOver(event) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    els.sftpDropzone.classList.add("active");
+  }
+
+  function handleSFTPDragLeave(event) {
+    if (event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    els.sftpDropzone.classList.remove("active");
+  }
+
+  async function handleSFTPDrop(event) {
+    event.preventDefault();
+    els.sftpDropzone.classList.remove("active");
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (!files.length || !state.sftp.sessionId || !state.sftp.path) {
+      return;
+    }
+    setSFTPLoader(true, `Uploading ${files.length} dropped file(s)...`);
+    try {
+      for (const file of files) {
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 1) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const contentBase64 = window.btoa(binary);
+        await window.go.main.App.UploadSFTPContent(state.sftp.sessionId, state.sftp.path, file.name, contentBase64);
+      }
+      await refreshSFTP();
+      showToast(`Uploaded ${files.length} file(s).`);
+    } catch (error) {
+      showToast(String(error), true);
+      setSFTPLoader(false);
+    }
   }
 
   function toggleSFTP() {
@@ -841,6 +992,36 @@
     state.sftp.visible = false;
     syncSFTPView();
     showToast("SFTP panel hidden. Session stays open until Close.");
+  }
+
+  function startSplitResize(event) {
+    if (!state.sftp.visible) {
+      return;
+    }
+    event.preventDefault();
+    state.resizeActive = true;
+    els.splitResizer.classList.add("dragging");
+  }
+
+  function handleSplitResize(event) {
+    if (!state.resizeActive) {
+      return;
+    }
+    const min = 320;
+    const max = Math.max(min, Math.floor(window.innerWidth * 0.6));
+    const width = Math.max(min, Math.min(max, window.innerWidth - event.clientX - 24));
+    state.splitWidth = width;
+    els.workspaceBody.style.setProperty("--sftp-width", `${width}px`);
+    debounceResizeTerminal();
+  }
+
+  function stopSplitResize() {
+    if (!state.resizeActive) {
+      return;
+    }
+    state.resizeActive = false;
+    els.splitResizer.classList.remove("dragging");
+    debounceResizeTerminal();
   }
 
   function openSessionTab(session) {
@@ -1006,6 +1187,7 @@
         path: "",
         parent: "",
         entries: [],
+        selectedPaths: [],
       };
       syncSFTPView();
     }

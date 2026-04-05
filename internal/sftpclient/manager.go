@@ -1,6 +1,7 @@
 package sftpclient
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -193,6 +194,31 @@ func (m *Manager) Upload(sessionID string, localPath string, remoteDir string) (
 
 	if _, err := io.Copy(dst, src); err != nil {
 		return Directory{}, fmt.Errorf("upload file: %w", err)
+	}
+
+	return m.List(sessionID, resolvedDir)
+}
+
+func (m *Manager) UploadContent(sessionID string, fileName string, content []byte, remoteDir string) (Directory, error) {
+	s, err := m.get(sessionID)
+	if err != nil {
+		return Directory{}, err
+	}
+
+	resolvedDir, err := s.client.RealPath(remoteDir)
+	if err != nil || resolvedDir == "" {
+		resolvedDir = remoteDir
+	}
+
+	remotePath := filepath.ToSlash(filepath.Join(resolvedDir, filepath.Base(fileName)))
+	dst, err := s.client.OpenFile(remotePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		return Directory{}, fmt.Errorf("create remote file: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, bytes.NewReader(content)); err != nil {
+		return Directory{}, fmt.Errorf("upload content: %w", err)
 	}
 
 	return m.List(sessionID, resolvedDir)
