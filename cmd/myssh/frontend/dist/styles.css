@@ -428,8 +428,49 @@ button:disabled {
 
 .terminal-topbar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+}
+
+.terminal-tabs {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(110, 143, 179, 0.16);
+  background: rgba(110, 143, 179, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.terminal-tab.active {
+  background: rgba(79, 179, 255, 0.16);
+  border-color: rgba(79, 179, 255, 0.28);
+}
+
+.terminal-tab-label {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-tab-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
 }
 
 .terminal-subtitle {

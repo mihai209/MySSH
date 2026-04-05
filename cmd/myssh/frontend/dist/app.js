@@ -9,6 +9,8 @@
     fitAddon: null,
     webglAddon: null,
     webglEnabled: false,
+    sessions: [],
+    activeSessionId: "",
     terminalBuffer: "",
     pendingTerminalWrite: "",
     terminalFlushScheduled: false,
@@ -78,6 +80,10 @@
     els.terminalTitle = document.getElementById("terminal-title");
     els.terminalSubtitle = document.getElementById("terminal-subtitle");
     els.terminalStatusChip = document.getElementById("terminal-status-chip");
+    els.terminalRename = document.getElementById("terminal-rename");
+    els.terminalReconnect = document.getElementById("terminal-reconnect");
+    els.terminalClose = document.getElementById("terminal-close");
+    els.terminalTabs = document.getElementById("terminal-tabs");
     els.terminalLoader = document.getElementById("terminal-loader");
     els.terminalLoaderText = document.getElementById("terminal-loader-text");
     els.terminalTrust = document.getElementById("terminal-trust");
@@ -105,6 +111,9 @@
     els.authKind.addEventListener("change", updateSecurityCopy);
     els.keySource.addEventListener("change", updateSecurityCopy);
     els.terminalBack.addEventListener("click", closeTerminal);
+    els.terminalRename.addEventListener("click", renameActiveSession);
+    els.terminalReconnect.addEventListener("click", reconnectActiveSession);
+    els.terminalClose.addEventListener("click", closeActiveSession);
     els.terminalTrustButton.addEventListener("click", trustPendingHost);
     els.terminalGpuToggle.addEventListener("click", toggleTerminalGpu);
     els.terminalCopy.addEventListener("click", copyTerminalSelection);
@@ -352,38 +361,52 @@
       return;
     }
 
-    openTerminal(profile);
-    setTerminalLoader(true, `Connecting to ${profile.host}...`);
-    setTerminalStatus("Connecting");
-    appendTerminalOutput(`[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\r\n`);
+    const tab = openSessionTab({
+      title: profile.name || "SSH Session",
+      subtitle: formatSessionTarget(profile),
+      connectTarget: profile,
+      profileId: profile.id,
+      kind: "ssh",
+      loaderVisible: true,
+      loaderText: `Connecting to ${profile.host}...`,
+      status: "Connecting",
+      pendingHostKeyId: profile.id,
+    });
+    appendTerminalOutputToTab(tab.id, `[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\r\n`);
 
     try {
-      await window.go.main.App.ConnectProfile(profile.id);
+      const backendSessionId = await window.go.main.App.ConnectProfile(profile.id);
+      attachBackendSessionToTab(tab.id, backendSessionId);
     } catch (error) {
-      setTerminalLoader(false);
-      setTerminalStatus("Error");
-      appendTerminalOutput(`[MySSH] Connection error: ${String(error)}\r\n`);
+      updateSession(tab.id, {
+        loaderVisible: false,
+        status: "Error",
+      });
+      appendTerminalOutputToTab(tab.id, `[MySSH] Connection error: ${String(error)}\r\n`);
       setStatus(String(error), true);
     }
   }
 
   async function connectLocalShell() {
-    openTerminal({
-      name: "Local Terminal",
-      username: "local",
-      host: "localhost",
-      port: 0,
+    const tab = openSessionTab({
+      title: "Local Terminal",
+      subtitle: "local@localhost",
+      kind: "local",
+      loaderVisible: true,
+      loaderText: "Opening local shell...",
+      status: "Connecting",
     });
-    setTerminalLoader(true, "Opening local shell...");
-    setTerminalStatus("Connecting");
-    appendTerminalOutput("[MySSH] Opening local shell\r\n");
+    appendTerminalOutputToTab(tab.id, "[MySSH] Opening local shell\r\n");
 
     try {
-      await window.go.main.App.ConnectLocalShell();
+      const backendSessionId = await window.go.main.App.ConnectLocalShell();
+      attachBackendSessionToTab(tab.id, backendSessionId);
     } catch (error) {
-      setTerminalLoader(false);
-      setTerminalStatus("Error");
-      appendTerminalOutput(`[MySSH] Local shell error: ${String(error)}\r\n`);
+      updateSession(tab.id, {
+        loaderVisible: false,
+        status: "Error",
+      });
+      appendTerminalOutputToTab(tab.id, `[MySSH] Local shell error: ${String(error)}\r\n`);
       setStatus(String(error), true);
     }
   }
@@ -512,96 +535,282 @@
     els.statusText.style.color = isError ? "#ff8da0" : "";
   }
 
-  function openTerminal(profile) {
+  function openSessionTab(session) {
+    const entry = {
+      id: `client-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      backendSessionId: "",
+      title: session.title || "Session",
+      subtitle: session.subtitle || "Waiting for connection...",
+      kind: session.kind || "ssh",
+      connectTarget: session.connectTarget || null,
+      profileId: session.profileId || "",
+      pendingHostKeyId: session.pendingHostKeyId || "",
+      buffer: "",
+      status: session.status || "Idle",
+      loaderVisible: Boolean(session.loaderVisible),
+      loaderText: session.loaderText || "",
+      trustVisible: false,
+      trustText: "",
+    };
+    state.sessions.push(entry);
+    activateSession(entry.id);
+    return entry;
+  }
+
+  function updateSession(sessionId, patch) {
+    const session = findSession(sessionId);
+    if (!session) {
+      return;
+    }
+    Object.assign(session, patch);
+    if (state.activeSessionId === sessionId) {
+      syncActiveSessionView();
+    }
+    renderSessionTabs();
+  }
+
+  function attachBackendSessionToTab(clientSessionId, backendSessionId) {
+    const session = findSession(clientSessionId);
+    if (!session) {
+      return;
+    }
+    session.backendSessionId = backendSessionId;
+    if (!session.pendingHostKeyId) {
+      session.pendingHostKeyId = backendSessionId;
+    }
+    renderSessionTabs();
+  }
+
+  function activateSession(sessionId) {
+    state.activeSessionId = sessionId;
     state.terminalVisible = true;
-    state.terminalBuffer = "";
     els.terminalScreen.classList.remove("hidden");
-    els.terminalTitle.textContent = profile.name || "SSH Session";
-    els.terminalSubtitle.textContent = formatSessionTarget(profile);
-    els.terminalTrust.classList.add("hidden");
+    ensureTerminal();
+    syncActiveSessionView();
+    renderSessionTabs();
+    state.terminal.focus();
+  }
+
+  function syncActiveSessionView() {
+    const session = activeSession();
+    if (!session) {
+      els.terminalScreen.classList.add("hidden");
+      return;
+    }
+
+    state.terminalBuffer = session.buffer || "";
+    els.terminalTitle.textContent = session.title;
+    els.terminalSubtitle.textContent = session.subtitle;
+    setTerminalStatus(session.status || "Idle");
+    setTerminalLoader(Boolean(session.loaderVisible), session.loaderText || "");
+    els.terminalTrust.classList.toggle("hidden", !session.trustVisible);
+    els.terminalTrustCopy.textContent = session.trustText || "";
+
     destroyTerminal();
     ensureTerminal();
     state.terminal.reset();
-    state.terminal.focus();
+    if (session.buffer) {
+      queueTerminalWrite(session.buffer);
+    }
+  }
+
+  function renderSessionTabs() {
+    els.terminalTabs.innerHTML = "";
+    state.sessions.forEach((session) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "terminal-tab";
+      if (session.id === state.activeSessionId) {
+        button.classList.add("active");
+      }
+      button.innerHTML = `
+        <span class="terminal-tab-label">${escapeHtml(session.title)}</span>
+        <button class="terminal-tab-close" data-session-close="${escapeHtml(session.id)}">x</button>
+      `;
+      button.addEventListener("click", () => activateSession(session.id));
+      els.terminalTabs.appendChild(button);
+    });
+    els.terminalReconnect.disabled = !activeSession();
+    els.terminalRename.disabled = !activeSession();
+    els.terminalClose.disabled = !activeSession();
+    Array.from(els.terminalTabs.querySelectorAll("[data-session-close]")).forEach((closeButton) => {
+      closeButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeSession(closeButton.getAttribute("data-session-close"));
+      });
+    });
   }
 
   async function closeTerminal() {
     state.terminalVisible = false;
     els.terminalScreen.classList.add("hidden");
-    setTerminalLoader(false);
-    els.terminalTrust.classList.add("hidden");
-    setTerminalStatus("Idle");
-    destroyTerminal();
-    try {
-      await window.go.main.App.DisconnectTerminal();
-    } catch (_) {
-      // best effort disconnect
+  }
+
+  async function closeActiveSession() {
+    if (!state.activeSessionId) {
+      return;
     }
+    await closeSession(state.activeSessionId);
+  }
+
+  async function closeSession(sessionId) {
+    const session = findSession(sessionId);
+    if (!session) {
+      return;
+    }
+    if (session.backendSessionId) {
+      try {
+        await window.go.main.App.DisconnectTerminal(session.backendSessionId);
+      } catch (_) {}
+    }
+    state.sessions = state.sessions.filter((item) => item.id !== sessionId);
+    if (state.activeSessionId === sessionId) {
+      state.activeSessionId = state.sessions[0]?.id || "";
+    }
+    if (state.activeSessionId) {
+      activateSession(state.activeSessionId);
+    } else {
+      state.terminalVisible = false;
+      els.terminalScreen.classList.add("hidden");
+      destroyTerminal();
+    }
+    renderSessionTabs();
+  }
+
+  async function reconnectActiveSession() {
+    const session = activeSession();
+    if (!session) {
+      return;
+    }
+    if (session.backendSessionId) {
+      try {
+        await window.go.main.App.DisconnectTerminal(session.backendSessionId);
+      } catch (_) {}
+      session.backendSessionId = "";
+    }
+    session.buffer = "";
+    session.loaderVisible = true;
+    session.status = "Connecting";
+    session.trustVisible = false;
+    syncActiveSessionView();
+    if (session.kind === "local") {
+      const backendSessionId = await window.go.main.App.ConnectLocalShell();
+      attachBackendSessionToTab(session.id, backendSessionId);
+      return;
+    }
+    if (session.profileId) {
+      const backendSessionId = await window.go.main.App.ConnectProfile(session.profileId);
+      attachBackendSessionToTab(session.id, backendSessionId);
+    }
+  }
+
+  function renameActiveSession() {
+    const session = activeSession();
+    if (!session) {
+      return;
+    }
+    const nextTitle = window.prompt("Session name", session.title);
+    if (!nextTitle) {
+      return;
+    }
+    session.title = nextTitle.trim() || session.title;
+    syncActiveSessionView();
+    renderSessionTabs();
+  }
+
+  function activeSession() {
+    return state.sessions.find((item) => item.id === state.activeSessionId) || null;
+  }
+
+  function findSession(sessionId) {
+    return state.sessions.find((item) => item.id === sessionId) || null;
   }
 
   function handleTerminalOutput(payload) {
-    if (!state.terminalVisible) {
+    if (!payload?.sessionId) {
       return;
     }
-    appendTerminalOutput(payload?.chunk || "");
+    appendTerminalOutputToTab(resolveSessionTabId(payload.sessionId), payload?.chunk || "");
   }
 
   function handleTerminalStatus(payload) {
+    const sessionId = resolveSessionTabId(payload?.sessionId);
     const message = payload?.message || "SSH status update";
     const status = payload?.state || "Idle";
     const profile = payload?.profile || {};
-
-    setTerminalStatus(status);
-    els.terminalTitle.textContent = profile.name || "SSH Session";
-    els.terminalSubtitle.textContent = profile.host ? formatSessionTarget(profile) : "Waiting for connection...";
-
-    if (status === "connecting" || status === "reconnecting") {
-      setTerminalLoader(true, message);
-    } else {
-      setTerminalLoader(false);
+    const session = findSession(sessionId);
+    if (!session) {
+      return;
     }
-
-    if (state.terminalVisible) {
-      appendTerminalOutput(`[MySSH] ${message}\r\n`);
+    session.title = profile.name || session.title || "SSH Session";
+    session.subtitle = profile.host ? formatSessionTarget(profile) : session.subtitle;
+    session.status = status;
+    session.loaderVisible = status === "connecting" || status === "reconnecting";
+    session.loaderText = message;
+    session.trustVisible = false;
+    appendTerminalOutputToTab(session.id, `[MySSH] ${message}\r\n`);
+    if (state.activeSessionId === session.id) {
+      syncActiveSessionView();
     }
+    renderSessionTabs();
   }
 
   function handleUnknownHostKey(payload) {
-    if (!state.terminalVisible) {
+    const session = findSession(resolveSessionTabId(payload?.sessionId));
+    if (!session) {
       return;
     }
-
-    els.terminalTrust.classList.remove("hidden");
-    els.terminalTrustCopy.textContent = `${payload?.message || "Unknown host key"}\n${payload?.fingerprint || ""}`;
-    setTerminalLoader(false);
-    setTerminalStatus("Trust Required");
-    appendTerminalOutput(`[MySSH] Unknown host key: ${payload?.fingerprint || "unknown"}\r\n`);
+    session.trustVisible = true;
+    session.trustText = `${payload?.message || "Unknown host key"}\n${payload?.fingerprint || ""}`;
+    session.status = "Trust Required";
+    session.loaderVisible = false;
+    appendTerminalOutputToTab(session.id, `[MySSH] Unknown host key: ${payload?.fingerprint || "unknown"}\r\n`);
+    if (state.activeSessionId === session.id) {
+      syncActiveSessionView();
+    }
   }
 
   async function trustPendingHost() {
+    const session = activeSession();
+    if (!session) {
+      return;
+    }
     try {
-      await window.go.main.App.TrustPendingHost();
-      els.terminalTrust.classList.add("hidden");
-      setTerminalStatus("Trusted");
-      appendTerminalOutput("[MySSH] Host key trusted. Reconnect now.\r\n");
-      await connectProfile();
+      await window.go.main.App.TrustPendingHost(session.pendingHostKeyId || session.profileId || "");
+      session.trustVisible = false;
+      session.status = "Trusted";
+      appendTerminalOutputToTab(session.id, "[MySSH] Host key trusted. Reconnect now.\r\n");
+      await reconnectActiveSession();
     } catch (error) {
-      appendTerminalOutput(`[MySSH] Trust error: ${String(error)}\r\n`);
+      appendTerminalOutputToTab(session.id, `[MySSH] Trust error: ${String(error)}\r\n`);
     }
   }
 
   function appendTerminalOutput(chunk) {
+    const session = activeSession();
+    if (!session) {
+      return;
+    }
+    appendTerminalOutputToTab(session.id, chunk);
+  }
+
+  function appendTerminalOutputToTab(sessionId, chunk) {
+    const session = findSession(sessionId);
+    if (!session) {
+      return;
+    }
     const sanitized = sanitizeTerminalChunk(chunk);
     if (!sanitized) {
       return;
     }
-    state.terminalBuffer += sanitized;
-    if (state.terminalBuffer.length > 1200000) {
-      state.terminalBuffer = state.terminalBuffer.slice(-900000);
+    session.buffer = (session.buffer || "") + sanitized;
+    if (session.buffer.length > 1200000) {
+      session.buffer = session.buffer.slice(-900000);
     }
-    if (!state.terminal) {
+    if (!state.terminal || state.activeSessionId !== sessionId) {
       return;
     }
+    state.terminalBuffer = session.buffer;
     queueTerminalWrite(sanitized);
   }
 
@@ -678,13 +887,21 @@
     });
 
     state.terminal.onData((data) => {
-      window.go.main.App.SendTerminalInput(data).catch((error) => {
+      const session = activeSession();
+      if (!session?.backendSessionId) {
+        return;
+      }
+      window.go.main.App.SendTerminalInput(session.backendSessionId, data).catch((error) => {
         appendTerminalOutput(`\r\n[MySSH] Input error: ${String(error)}\r\n`);
       });
     });
 
     state.terminal.onResize((size) => {
-      window.go.main.App.ResizeTerminal(size.cols, size.rows).catch(() => {});
+      const session = activeSession();
+      if (!session?.backendSessionId) {
+        return;
+      }
+      window.go.main.App.ResizeTerminal(session.backendSessionId, size.cols, size.rows).catch(() => {});
     });
   }
 
@@ -695,7 +912,11 @@
     state.fitAddon.fit();
     const cols = state.terminal.cols;
     const rows = state.terminal.rows;
-    window.go.main.App.ResizeTerminal(cols, rows).catch(() => {});
+    const session = activeSession();
+    if (!session?.backendSessionId) {
+      return;
+    }
+    window.go.main.App.ResizeTerminal(session.backendSessionId, cols, rows).catch(() => {});
   }
 
   function destroyTerminal() {
@@ -808,7 +1029,15 @@
     if (!text) {
       return;
     }
-    await window.go.main.App.SendTerminalInput(text);
+    const session = activeSession();
+    if (!session?.backendSessionId) {
+      return;
+    }
+    await window.go.main.App.SendTerminalInput(session.backendSessionId, text);
+  }
+
+  function resolveSessionTabId(eventSessionId) {
+    return state.sessions.find((item) => item.backendSessionId === eventSessionId || item.pendingHostKeyId === eventSessionId)?.id || eventSessionId;
   }
 
   function sanitizeTerminalChunk(chunk) {

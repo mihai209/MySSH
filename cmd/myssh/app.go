@@ -15,12 +15,12 @@ import (
 )
 
 type App struct {
-	ctx         context.Context
-	service     *appsvc.Service
-	secretStore *secret.Store
-	sshManager  *sshclient.Manager
-	dataDir     string
-	pendingHost *sshclient.UnknownHostError
+	ctx          context.Context
+	service      *appsvc.Service
+	secretStore  *secret.Store
+	sshManager   *sshclient.Manager
+	dataDir      string
+	pendingHosts map[string]*sshclient.UnknownHostError
 }
 
 type ProfileDTO struct {
@@ -65,9 +65,10 @@ type SaveProfileInput struct {
 
 func NewApp(service *appsvc.Service, secretStore *secret.Store, dataDir string) *App {
 	app := &App{
-		service:     service,
-		secretStore: secretStore,
-		dataDir:     dataDir,
+		service:      service,
+		secretStore:  secretStore,
+		dataDir:      dataDir,
+		pendingHosts: map[string]*sshclient.UnknownHostError{},
 	}
 	app.sshManager = sshclient.NewManager(func(name string, payload interface{}) {
 		if app.ctx != nil {
@@ -263,15 +264,15 @@ func (a *App) Ping() string {
 	return fmt.Sprintf("MySSH backend ready: %s", a.dataDir)
 }
 
-func (a *App) ConnectProfile(id string) error {
+func (a *App) ConnectProfile(id string) (string, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return fmt.Errorf("profile id is required")
+		return "", fmt.Errorf("profile id is required")
 	}
 
 	profiles, err := a.service.ListProfiles()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	var profile domain.Profile
@@ -285,23 +286,23 @@ func (a *App) ConnectProfile(id string) error {
 	}
 
 	if !found {
-		return fmt.Errorf("profile not found")
+		return "", fmt.Errorf("profile not found")
 	}
 
 	secretValue := ""
 	if profile.AuthKind == domain.AuthPassword || ((profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourceContent) {
 		if profile.SecretRef == "" {
 			if profile.AuthKind == domain.AuthPassword {
-				return fmt.Errorf("password profile has no stored secret")
+				return "", fmt.Errorf("password profile has no stored secret")
 			}
-			return fmt.Errorf("private key content profile has no stored secret")
+			return "", fmt.Errorf("private key content profile has no stored secret")
 		}
 		secretValue, err = a.secretStore.Get(profile.SecretRef)
 		if err != nil {
 			if profile.AuthKind == domain.AuthPassword {
-				return fmt.Errorf("load password from keyring: %w", err)
+				return "", fmt.Errorf("load password from keyring: %w", err)
 			}
-			return fmt.Errorf("load private key content from keyring: %w", err)
+			return "", fmt.Errorf("load private key content from keyring: %w", err)
 		}
 	}
 
@@ -309,7 +310,7 @@ func (a *App) ConnectProfile(id string) error {
 	if profile.PassphraseRef != "" {
 		passphraseValue, err = a.secretStore.Get(profile.PassphraseRef)
 		if err != nil {
-			return fmt.Errorf("load key passphrase from keyring: %w", err)
+			return "", fmt.Errorf("load key passphrase from keyring: %w", err)
 		}
 	}
 
@@ -317,41 +318,41 @@ func (a *App) ConnectProfile(id string) error {
 	if profile.ConnectSecretRef != "" {
 		connectSecretValue, err = a.secretStore.Get(profile.ConnectSecretRef)
 		if err != nil {
-			return fmt.Errorf("load connect secret from keyring: %w", err)
+			return "", fmt.Errorf("load connect secret from keyring: %w", err)
 		}
 	}
 
-	err = a.sshManager.Connect(a.ctx, profile, secretValue, passphraseValue, connectSecretValue)
+	sessionID, err := a.sshManager.Connect(a.ctx, profile, secretValue, passphraseValue, connectSecretValue)
 	if err != nil {
 		var unknownHostErr *sshclient.UnknownHostError
 		if errors.As(err, &unknownHostErr) {
-			a.pendingHost = unknownHostErr
+			a.pendingHosts[profile.ID] = unknownHostErr
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "ssh:hostkey", map[string]interface{}{
+					"sessionId":    profile.ID,
 					"host":        unknownHostErr.HostWithPort,
 					"fingerprint": unknownHostErr.Fingerprint,
 					"message":     fmt.Sprintf("Unknown host key for %s", unknownHostErr.HostWithPort),
 				})
 			}
 		}
-		return err
+		return "", err
 	}
 
-	a.pendingHost = nil
-	return nil
+	delete(a.pendingHosts, profile.ID)
+	return sessionID, nil
 }
 
-func (a *App) ConnectLocalShell() error {
-	a.pendingHost = nil
+func (a *App) ConnectLocalShell() (string, error) {
 	return a.sshManager.ConnectLocalShell(a.ctx)
 }
 
-func (a *App) SendTerminalInput(input string) error {
-	return a.sshManager.SendInput(input)
+func (a *App) SendTerminalInput(sessionID string, input string) error {
+	return a.sshManager.SendInput(sessionID, input)
 }
 
-func (a *App) ResizeTerminal(cols int, rows int) error {
-	return a.sshManager.Resize(cols, rows)
+func (a *App) ResizeTerminal(sessionID string, cols int, rows int) error {
+	return a.sshManager.Resize(sessionID, cols, rows)
 }
 
 func (a *App) CopyToClipboard(text string) {
@@ -372,20 +373,21 @@ func (a *App) PasteFromClipboard() string {
 	return text
 }
 
-func (a *App) DisconnectTerminal() {
-	a.sshManager.Disconnect()
+func (a *App) DisconnectTerminal(sessionID string) {
+	a.sshManager.Disconnect(sessionID)
 }
 
-func (a *App) TrustPendingHost() error {
-	if a.pendingHost == nil {
+func (a *App) TrustPendingHost(sessionID string) error {
+	pendingHost := a.pendingHosts[sessionID]
+	if pendingHost == nil {
 		return fmt.Errorf("no pending unknown host")
 	}
 
-	if err := sshclient.AddKnownHost(a.pendingHost.HostWithPort, a.pendingHost.Key); err != nil {
+	if err := sshclient.AddKnownHost(pendingHost.HostWithPort, pendingHost.Key); err != nil {
 		return err
 	}
 
-	a.pendingHost = nil
+	delete(a.pendingHosts, sessionID)
 	return nil
 }
 

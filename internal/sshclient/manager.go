@@ -32,12 +32,13 @@ func (e *UnknownHostError) Error() string {
 }
 
 type Manager struct {
-	mu      sync.Mutex
-	emit    EmitFunc
-	current *connection
+	mu       sync.Mutex
+	emit     EmitFunc
+	sessions map[string]*connection
 }
 
 type connection struct {
+	id             string
 	profile        domain.Profile
 	secret         string
 	passphrase     string
@@ -54,13 +55,13 @@ type connection struct {
 }
 
 func NewManager(emit EmitFunc) *Manager {
-	return &Manager{emit: emit}
+	return &Manager{emit: emit, sessions: map[string]*connection{}}
 }
 
-func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret string, passphrase string, connectSecret string) error {
-	m.Disconnect()
-
+func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret string, passphrase string, connectSecret string) (string, error) {
+	sessionID := domain.NewID()
 	conn := &connection{
+		id:             sessionID,
 		profile:        profile,
 		secret:         secret,
 		passphrase:     passphrase,
@@ -70,73 +71,67 @@ func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret st
 	}
 
 	m.mu.Lock()
-	m.current = conn
+	m.sessions[sessionID] = conn
 	m.mu.Unlock()
 
-	m.emitStatus("connecting", profile, fmt.Sprintf("Connecting to %s...", profile.Host), 1)
+	m.emitStatus(sessionID, "connecting", profile, fmt.Sprintf("Connecting to %s...", profile.Host), 1)
 	if err := m.establish(ctx, conn, 1); err != nil {
-		m.mu.Lock()
-		if m.current == conn {
-			m.current = nil
-		}
-		m.mu.Unlock()
-		return err
+		m.Disconnect(sessionID)
+		return "", err
 	}
 
-	return nil
+	return sessionID, nil
 }
 
-func (m *Manager) ConnectLocalShell(ctx context.Context) error {
-	m.Disconnect()
-
+func (m *Manager) ConnectLocalShell(ctx context.Context) (string, error) {
 	profile := domain.Profile{
-		ID:       "local",
+		ID:       domain.NewID(),
 		Name:     "Local Terminal",
 		Username: currentUsername(),
 		Host:     "localhost",
 		Port:     0,
 	}
 
+	sessionID := domain.NewID()
 	conn := &connection{
+		id:        sessionID,
 		profile:   profile,
 		reconnect: false,
 	}
 
 	m.mu.Lock()
-	m.current = conn
+	m.sessions[sessionID] = conn
 	m.mu.Unlock()
 
-	m.emitStatus("connecting", profile, "Opening local shell...", 1)
+	m.emitStatus(sessionID, "connecting", profile, "Opening local shell...", 1)
 	if err := m.establishLocal(ctx, conn); err != nil {
-		m.mu.Lock()
-		if m.current == conn {
-			m.current = nil
-		}
-		m.mu.Unlock()
-		return err
+		m.Disconnect(sessionID)
+		return "", err
 	}
 
-	return nil
+	return sessionID, nil
 }
 
-func (m *Manager) SendInput(input string) error {
+func (m *Manager) SendInput(sessionID string, input string) error {
 	m.mu.Lock()
+	conn := m.sessions[sessionID]
 	defer m.mu.Unlock()
 
-	if m.current == nil || m.current.stdin == nil {
+	if conn == nil || conn.stdin == nil {
 		return fmt.Errorf("no active ssh session")
 	}
 
-	_, err := io.WriteString(m.current.stdin, input)
+	_, err := io.WriteString(conn.stdin, input)
 	return err
 }
 
-func (m *Manager) Resize(cols int, rows int) error {
+func (m *Manager) Resize(sessionID string, cols int, rows int) error {
 	m.mu.Lock()
+	conn := m.sessions[sessionID]
 	defer m.mu.Unlock()
 
-	if m.current == nil || m.current.session == nil {
-		if m.current == nil || m.current.resizeFn == nil {
+	if conn == nil || conn.session == nil {
+		if conn == nil || conn.resizeFn == nil {
 			return fmt.Errorf("no active terminal session")
 		}
 	}
@@ -144,15 +139,15 @@ func (m *Manager) Resize(cols int, rows int) error {
 		return nil
 	}
 
-	return m.current.resizeFn(cols, rows)
+	return conn.resizeFn(cols, rows)
 }
 
-func (m *Manager) Disconnect() {
+func (m *Manager) Disconnect(sessionID string) {
 	m.mu.Lock()
-	conn := m.current
+	conn := m.sessions[sessionID]
 	if conn != nil {
 		conn.manualClose = true
-		m.current = nil
+		delete(m.sessions, sessionID)
 	}
 	m.mu.Unlock()
 
@@ -171,7 +166,7 @@ func (m *Manager) Disconnect() {
 		}
 	}
 
-	m.emitStatus("disconnected", conn.profile, "Disconnected.", 0)
+	m.emitStatus(sessionID, "disconnected", conn.profile, "Disconnected.", 0)
 }
 
 func (m *Manager) establish(ctx context.Context, conn *connection, attempt int) error {
@@ -197,10 +192,10 @@ func (m *Manager) establish(ctx context.Context, conn *connection, attempt int) 
 		return nil
 	}
 
-	m.emitStatus("connected", conn.profile, fmt.Sprintf("Connected to %s", conn.profile.Host), attempt)
+	m.emitStatus(conn.id, "connected", conn.profile, fmt.Sprintf("Connected to %s", conn.profile.Host), attempt)
 
-	go m.pipeOutput(stdout)
-	go m.pipeOutput(stderr)
+	go m.pipeOutput(conn.id, stdout)
+	go m.pipeOutput(conn.id, stderr)
 	go m.watchSession(ctx, conn)
 
 	return nil
@@ -217,21 +212,22 @@ func (m *Manager) establishLocal(ctx context.Context, conn *connection) error {
 	conn.resizeFn = resizeFn
 	conn.closeFn = closeFn
 
-	m.emitStatus("connected", conn.profile, fmt.Sprintf("Local shell ready: %s", shell), 1)
+	m.emitStatus(conn.id, "connected", conn.profile, fmt.Sprintf("Local shell ready: %s", shell), 1)
 
-	go m.pipeOutput(master)
+	go m.pipeOutput(conn.id, master)
 	go m.watchSession(ctx, conn)
 
 	return nil
 }
 
-func (m *Manager) pipeOutput(reader io.Reader) {
+func (m *Manager) pipeOutput(sessionID string, reader io.Reader) {
 	buffer := make([]byte, 4096)
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
 			m.emit("ssh:output", map[string]interface{}{
-				"chunk": string(buffer[:n]),
+				"sessionId": sessionID,
+				"chunk":     string(buffer[:n]),
 			})
 		}
 		if err != nil {
@@ -247,7 +243,8 @@ func (m *Manager) watchSession(ctx context.Context, conn *connection) {
 	err := conn.waitFn()
 
 	m.mu.Lock()
-	stillCurrent := m.current == conn
+	currentConn := m.sessions[conn.id]
+	stillCurrent := currentConn == conn
 	manualClose := conn.manualClose
 	m.mu.Unlock()
 
@@ -261,18 +258,18 @@ func (m *Manager) watchSession(ctx context.Context, conn *connection) {
 
 	if !conn.reconnect {
 		m.mu.Lock()
-		if m.current == conn {
-			m.current = nil
+		if m.sessions[conn.id] == conn {
+			delete(m.sessions, conn.id)
 		}
 		m.mu.Unlock()
 		if err != nil {
-			m.emitStatus("disconnected", conn.profile, "Terminal session ended.", 0)
+			m.emitStatus(conn.id, "disconnected", conn.profile, "Terminal session ended.", 0)
 		}
 		return
 	}
 
 	if err != nil {
-		m.emitStatus("reconnecting", conn.profile, fmt.Sprintf("Connection dropped. Reconnecting to %s...", conn.profile.Host), 0)
+		m.emitStatus(conn.id, "reconnecting", conn.profile, fmt.Sprintf("Connection dropped. Reconnecting to %s...", conn.profile.Host), 0)
 	}
 
 	if conn.closeFn != nil {
@@ -285,21 +282,22 @@ func (m *Manager) watchSession(ctx context.Context, conn *connection) {
 		time.Sleep(conn.reconnectDelay)
 
 		m.mu.Lock()
-		if m.current != conn || conn.manualClose {
+		if m.sessions[conn.id] != conn || conn.manualClose {
 			m.mu.Unlock()
 			return
 		}
 		m.mu.Unlock()
 
-		m.emitStatus("connecting", conn.profile, fmt.Sprintf("Reconnecting to %s (attempt %d)...", conn.profile.Host, attempt), attempt)
+		m.emitStatus(conn.id, "connecting", conn.profile, fmt.Sprintf("Reconnecting to %s (attempt %d)...", conn.profile.Host, attempt), attempt)
 		if err := m.establish(ctx, conn, attempt); err == nil {
 			m.emit("ssh:output", map[string]interface{}{
-				"chunk": "\n[MySSH] Reconnected successfully.\n",
+				"sessionId": conn.id,
+				"chunk":     "\n[MySSH] Reconnected successfully.\n",
 			})
 			return
 		}
 
-		m.emitStatus("reconnecting", conn.profile, fmt.Sprintf("Reconnect failed. Retrying %s...", conn.profile.Host), attempt)
+		m.emitStatus(conn.id, "reconnecting", conn.profile, fmt.Sprintf("Reconnect failed. Retrying %s...", conn.profile.Host), attempt)
 	}
 }
 
@@ -310,10 +308,11 @@ func currentUsername() string {
 	return "local"
 }
 
-func (m *Manager) emitStatus(state string, profile domain.Profile, message string, attempt int) {
+func (m *Manager) emitStatus(sessionID string, state string, profile domain.Profile, message string, attempt int) {
 	m.emit("ssh:status", map[string]interface{}{
-		"state":   state,
-		"message": message,
+		"sessionId": sessionID,
+		"state":     state,
+		"message":   message,
 		"profile": map[string]interface{}{
 			"id":       profile.ID,
 			"name":     profile.Name,
