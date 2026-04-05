@@ -6,6 +6,7 @@
     terminalVisible: false,
     terminal: null,
     fitAddon: null,
+    webglAddon: null,
   };
 
   const els = {};
@@ -69,6 +70,9 @@
     els.terminalStatusChip = document.getElementById("terminal-status-chip");
     els.terminalLoader = document.getElementById("terminal-loader");
     els.terminalLoaderText = document.getElementById("terminal-loader-text");
+    els.terminalTrust = document.getElementById("terminal-trust");
+    els.terminalTrustCopy = document.getElementById("terminal-trust-copy");
+    els.terminalTrustButton = document.getElementById("terminal-trust-button");
     els.terminalContainer = document.getElementById("terminal-container");
     els.terminalBack = document.getElementById("terminal-back");
   }
@@ -85,6 +89,7 @@
     els.authKind.addEventListener("change", updateSecurityCopy);
     els.keySource.addEventListener("change", updateSecurityCopy);
     els.terminalBack.addEventListener("click", closeTerminal);
+    els.terminalTrustButton.addEventListener("click", trustPendingHost);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -94,6 +99,7 @@
     if (window.runtime?.EventsOn) {
       window.runtime.EventsOn("ssh:output", handleTerminalOutput);
       window.runtime.EventsOn("ssh:status", handleTerminalStatus);
+      window.runtime.EventsOn("ssh:hostkey", handleUnknownHostKey);
     }
 
     window.addEventListener("resize", debounceResizeTerminal);
@@ -356,6 +362,7 @@
     els.terminalScreen.classList.remove("hidden");
     els.terminalTitle.textContent = profile.name || "SSH Session";
     els.terminalSubtitle.textContent = `${profile.username}@${profile.host}:${profile.port}`;
+    els.terminalTrust.classList.add("hidden");
     ensureTerminal();
     state.terminal.reset();
     state.terminal.focus();
@@ -365,6 +372,7 @@
     state.terminalVisible = false;
     els.terminalScreen.classList.add("hidden");
     setTerminalLoader(false);
+    els.terminalTrust.classList.add("hidden");
     setTerminalStatus("Idle");
     try {
       await window.go.main.App.DisconnectTerminal();
@@ -397,6 +405,30 @@
 
     if (state.terminalVisible) {
       appendTerminalOutput(`[MySSH] ${message}\n`);
+    }
+  }
+
+  function handleUnknownHostKey(payload) {
+    if (!state.terminalVisible) {
+      return;
+    }
+
+    els.terminalTrust.classList.remove("hidden");
+    els.terminalTrustCopy.textContent = `${payload?.message || "Unknown host key"}\n${payload?.fingerprint || ""}`;
+    setTerminalLoader(false);
+    setTerminalStatus("Trust Required");
+    appendTerminalOutput(`[MySSH] Unknown host key: ${payload?.fingerprint || "unknown"}\n`);
+  }
+
+  async function trustPendingHost() {
+    try {
+      await window.go.main.App.TrustPendingHost();
+      els.terminalTrust.classList.add("hidden");
+      setTerminalStatus("Trusted");
+      appendTerminalOutput("[MySSH] Host key trusted. Reconnect now.\n");
+      await connectProfile();
+    } catch (error) {
+      appendTerminalOutput(`[MySSH] Trust error: ${String(error)}\n`);
     }
   }
 
@@ -440,6 +472,14 @@
 
     state.fitAddon = new window.FitAddon.FitAddon();
     state.terminal.loadAddon(state.fitAddon);
+    if (window.WebglAddon?.WebglAddon) {
+      try {
+        state.webglAddon = new window.WebglAddon.WebglAddon();
+        state.terminal.loadAddon(state.webglAddon);
+      } catch (_) {
+        state.webglAddon = null;
+      }
+    }
     state.terminal.open(els.terminalContainer);
     fitTerminal();
 

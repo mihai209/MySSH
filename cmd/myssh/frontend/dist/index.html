@@ -171,6 +171,14 @@
         <p id="terminal-loader-text">Connecting...</p>
       </div>
 
+      <div class="terminal-trust hidden" id="terminal-trust">
+        <div>
+          <p class="eyebrow">Unknown Host Key</p>
+          <p class="terminal-trust-copy" id="terminal-trust-copy">Fingerprint</p>
+        </div>
+        <button class="primary-button" id="terminal-trust-button">Trust and Connect</button>
+      </div>
+
       <div class="terminal-output" id="terminal-container"></div>
     </section>
 
@@ -247,6 +255,7 @@
 
     <script src="./vendor/xterm.js"></script>
     <script src="./vendor/xterm-addon-fit.js"></script>
+    <script src="./vendor/xterm-addon-webgl.js"></script>
     <script src="./app.js"></script>
   </body>
   </html>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -18,6 +19,7 @@ type App struct {
 	secretStore *secret.Store
 	sshManager  *sshclient.Manager
 	dataDir     string
+	pendingHost *sshclient.UnknownHostError
 }
 
 type ProfileDTO struct {
@@ -230,7 +232,24 @@ func (a *App) ConnectProfile(id string) error {
 		}
 	}
 
-	return a.sshManager.Connect(a.ctx, profile, secretValue)
+	err = a.sshManager.Connect(a.ctx, profile, secretValue)
+	if err != nil {
+		var unknownHostErr *sshclient.UnknownHostError
+		if errors.As(err, &unknownHostErr) {
+			a.pendingHost = unknownHostErr
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "ssh:hostkey", map[string]interface{}{
+					"host":        unknownHostErr.HostWithPort,
+					"fingerprint": unknownHostErr.Fingerprint,
+					"message":     fmt.Sprintf("Unknown host key for %s", unknownHostErr.HostWithPort),
+				})
+			}
+		}
+		return err
+	}
+
+	a.pendingHost = nil
+	return nil
 }
 
 func (a *App) SendTerminalInput(input string) error {
@@ -243,6 +262,19 @@ func (a *App) ResizeTerminal(cols int, rows int) error {
 
 func (a *App) DisconnectTerminal() {
 	a.sshManager.Disconnect()
+}
+
+func (a *App) TrustPendingHost() error {
+	if a.pendingHost == nil {
+		return fmt.Errorf("no pending unknown host")
+	}
+
+	if err := sshclient.AddKnownHost(a.pendingHost.HostWithPort, a.pendingHost.Key); err != nil {
+		return err
+	}
+
+	a.pendingHost = nil
+	return nil
 }
 
 func toProfileDTO(profile domain.Profile) ProfileDTO {

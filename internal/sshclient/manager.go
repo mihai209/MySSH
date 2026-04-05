@@ -2,6 +2,7 @@ package sshclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,17 @@ import (
 )
 
 type EmitFunc func(string, interface{})
+
+type UnknownHostError struct {
+	Host         string
+	HostWithPort string
+	Fingerprint  string
+	Key          ssh.PublicKey
+}
+
+func (e *UnknownHostError) Error() string {
+	return fmt.Sprintf("ssh: host %s is unknown (%s)", e.HostWithPort, e.Fingerprint)
+}
 
 type Manager struct {
 	mu      sync.Mutex
@@ -326,5 +338,55 @@ func knownHostsCallback() (ssh.HostKeyCallback, error) {
 		return nil, fmt.Errorf("load known_hosts: %w", err)
 	}
 
-	return callback, nil
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		err := callback(hostname, remote, key)
+		if err == nil {
+			return nil
+		}
+
+		var keyErr *knownhosts.KeyError
+		if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
+			return &UnknownHostError{
+				Host:         remote.String(),
+				HostWithPort: hostname,
+				Fingerprint:  ssh.FingerprintSHA256(key),
+				Key:          key,
+			}
+		}
+
+		return err
+	}, nil
+}
+
+func KnownHostsPath() (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(homeDir, ".ssh", "known_hosts"), nil
+}
+
+func AddKnownHost(host string, key ssh.PublicKey) error {
+	path, err := KnownHostsPath()
+	if err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create .ssh dir: %w", err)
+	}
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open known_hosts: %w", err)
+	}
+	defer file.Close()
+
+	line := knownhosts.Line([]string{host}, key)
+	if _, err := io.WriteString(file, line+"\n"); err != nil {
+		return fmt.Errorf("append known_hosts: %w", err)
+	}
+	return nil
 }

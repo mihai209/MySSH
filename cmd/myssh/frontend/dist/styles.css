@@ -441,6 +441,23 @@ button:disabled {
   border: 1px solid rgba(79, 179, 255, 0.18);
 }
 
+.terminal-trust {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(255, 95, 125, 0.08);
+  border: 1px solid rgba(255, 95, 125, 0.2);
+}
+
+.terminal-trust-copy {
+  margin: 6px 0 0;
+  color: #ffc9d4;
+  line-height: 1.5;
+}
+
 .loader-spinner {
   width: 16px;
   height: 16px;
