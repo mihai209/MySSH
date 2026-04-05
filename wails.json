@@ -1,0 +1,12 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "MySSH",
+  "outputfilename": "myssh",
+  "frontend:dir": "cmd/myssh/frontend",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "author": {
+    "name": "Mihai"
+  }
+}

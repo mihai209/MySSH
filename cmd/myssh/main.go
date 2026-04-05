@@ -1,15 +1,22 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"log"
 	"os"
 	"path/filepath"
 
-	"myssh/internal/app"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+
+	appsvc "myssh/internal/app"
 	"myssh/internal/store"
-	"myssh/internal/ui"
 )
+
+//go:embed all:frontend/dist
+var assets embed.FS
 
 func main() {
 	dataDirFlag := flag.String("data-dir", "", "override the app data directory")
@@ -21,9 +28,22 @@ func main() {
 	}
 
 	repo := store.NewProfileRepository(dataDir)
-	service := app.NewService(repo)
-	if err := ui.Run(service, dataDir); err != nil {
-		log.Fatalf("run ui: %v", err)
+	service := appsvc.NewService(repo)
+	backend := NewApp(service, dataDir)
+
+	if err := wails.Run(&options.App{
+		Title:     "MySSH",
+		Width:     1360,
+		Height:    880,
+		OnStartup: backend.startup,
+		AssetServer: &assetserver.Options{
+			Assets: assets,
+		},
+		Bind: []interface{}{
+			backend,
+		},
+	}); err != nil {
+		log.Fatalf("run wails: %v", err)
 	}
 }
 
