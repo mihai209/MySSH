@@ -21,20 +21,32 @@ const (
 	AuthAgent      AuthKind = "agent"
 )
 
+type KeySource string
+
+const (
+	KeySourceNone    KeySource = ""
+	KeySourcePath    KeySource = "path"
+	KeySourceContent KeySource = "content"
+)
+
 type Profile struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Username  string   `json:"username"`
-	Host      string   `json:"host"`
-	Port      int      `json:"port"`
-	AuthKind  AuthKind `json:"auth_kind"`
-	SecretRef string   `json:"secret_ref,omitempty"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Username        string    `json:"username"`
+	Host            string    `json:"host"`
+	Port            int       `json:"port"`
+	AuthKind        AuthKind  `json:"auth_kind"`
+	KeySource       KeySource `json:"key_source,omitempty"`
+	KeyPath         string    `json:"key_path,omitempty"`
+	SecretRef       string    `json:"secret_ref,omitempty"`
+	HasStoredSecret bool      `json:"has_stored_secret,omitempty"`
 }
 
 func (p *Profile) Normalize() {
 	p.Name = strings.TrimSpace(p.Name)
 	p.Username = strings.TrimSpace(p.Username)
 	p.Host = strings.TrimSpace(p.Host)
+	p.KeyPath = strings.TrimSpace(p.KeyPath)
 
 	if p.Port == 0 {
 		p.Port = DefaultSSHPort
@@ -63,7 +75,25 @@ func (p Profile) Validate() error {
 	}
 
 	switch p.AuthKind {
-	case AuthPassword, AuthPrivateKey, AuthAgent:
+	case AuthPassword:
+		p.KeySource = KeySourceNone
+		p.KeyPath = ""
+	case AuthPrivateKey:
+		switch p.KeySource {
+		case KeySourcePath:
+			if p.KeyPath == "" {
+				return errors.New("key path is required for private_key path mode")
+			}
+		case KeySourceContent:
+			p.KeyPath = ""
+		default:
+			return errors.New("key source must be path or content for private_key auth")
+		}
+	case AuthAgent:
+		p.KeySource = KeySourceNone
+		p.KeyPath = ""
+	case "":
+		return errors.New("auth kind is required")
 	default:
 		return fmt.Errorf("unsupported auth kind %q", p.AuthKind)
 	}

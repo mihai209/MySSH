@@ -40,7 +40,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -105,6 +106,12 @@ select {
   margin: 0;
 }
 
+.brand-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .search-wrap,
 .modal-grid label {
   display: flex;
@@ -121,7 +128,8 @@ select {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   padding: 14px 16px;
   border-radius: 14px;
@@ -132,9 +140,15 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: rgba(79, 179, 255, 0.8);
   box-shadow: 0 0 0 4px rgba(79, 179, 255, 0.12);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 172px;
 }
 
 .sidebar-stats {
@@ -391,6 +405,12 @@ select:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   margin: 22px 0;
+}
+
+.modal-security-copy {
+  margin: 0 0 18px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .button-icon {

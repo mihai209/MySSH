@@ -12,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 
 	appsvc "myssh/internal/app"
+	"myssh/internal/secret"
 	"myssh/internal/store"
 )
 
@@ -29,7 +30,12 @@ func main() {
 
 	repo := store.NewProfileRepository(dataDir)
 	service := appsvc.NewService(repo)
-	backend := NewApp(service, dataDir)
+	secretStore, err := secret.NewStore("MySSH")
+	if err != nil {
+		log.Fatalf("init secure store: %v", err)
+	}
+
+	backend := NewApp(service, secretStore, dataDir)
 
 	if err := wails.Run(&options.App{
 		Title:     "MySSH",

@@ -26,6 +26,38 @@ func TestProfileNormalizeAndValidate(t *testing.T) {
 	}
 }
 
+func TestPrivateKeyPathRequiresPath(t *testing.T) {
+	profile := Profile{
+		ID:        "id",
+		Name:      "Prod",
+		Username:  "root",
+		Host:      "server.example.com",
+		Port:      22,
+		AuthKind:  AuthPrivateKey,
+		KeySource: KeySourcePath,
+	}
+
+	if err := profile.Validate(); err == nil {
+		t.Fatal("expected missing key path error")
+	}
+}
+
+func TestPrivateKeyContentIsValid(t *testing.T) {
+	profile := Profile{
+		ID:        "id",
+		Name:      "Prod",
+		Username:  "root",
+		Host:      "server.example.com",
+		Port:      22,
+		AuthKind:  AuthPrivateKey,
+		KeySource: KeySourceContent,
+	}
+
+	if err := profile.Validate(); err != nil {
+		t.Fatalf("expected valid profile, got %v", err)
+	}
+}
+
 func TestProfileValidateRejectsInvalidHost(t *testing.T) {
 	profile := Profile{
 		ID:       "id",

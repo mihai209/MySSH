@@ -36,6 +36,7 @@
     els.machineHost = document.getElementById("machine-host");
     els.machinePort = document.getElementById("machine-port");
     els.machineAuth = document.getElementById("machine-auth");
+    els.machineSecretState = document.getElementById("machine-secret-state");
     els.emptyState = document.getElementById("empty-state");
     els.machineDetail = document.getElementById("machine-detail");
     els.modalBackdrop = document.getElementById("modal-backdrop");
@@ -50,6 +51,14 @@
     els.host = document.getElementById("host");
     els.port = document.getElementById("port");
     els.authKind = document.getElementById("auth-kind");
+    els.keySource = document.getElementById("key-source");
+    els.keySourceWrap = document.getElementById("key-source-wrap");
+    els.keyPath = document.getElementById("key-path");
+    els.keyPathWrap = document.getElementById("key-path-wrap");
+    els.secretWrap = document.getElementById("secret-wrap");
+    els.keyContentWrap = document.getElementById("key-content-wrap");
+    els.keyContent = document.getElementById("key-content");
+    els.modalSecurityCopy = document.getElementById("modal-security-copy");
     els.secret = document.getElementById("secret");
   }
 
@@ -63,6 +72,7 @@
     els.connectProfile.addEventListener("click", connectPlaceholder);
     els.deleteProfile.addEventListener("click", deleteProfile);
     els.authKind.addEventListener("change", updateSecurityCopy);
+    els.keySource.addEventListener("change", updateSecurityCopy);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -134,7 +144,7 @@
       card.innerHTML = `
         <div class="machine-card-title">${escapeHtml(profile.name || "Unnamed host")}</div>
         <div class="machine-card-meta">${escapeHtml(profile.username)}@${escapeHtml(profile.host)}:${profile.port}</div>
-        <div class="machine-card-auth">${escapeHtml(profile.authKind)}</div>
+        <div class="machine-card-auth">${escapeHtml(profile.authKind)}${profile.keySource ? ` • ${escapeHtml(profile.keySource)}` : ""}</div>
       `;
 
       card.addEventListener("click", () => {
@@ -158,7 +168,7 @@
       els.heroTitle.textContent = hasProfiles ? "Pick an SSH machine" : "No SSH selected";
       els.heroCopy.textContent = hasProfiles
         ? "Select a machine from the left or add a new one."
-        : "Start by adding an SSH machine. Passwords and keys still stay outside plain-text storage.";
+        : "Start by adding an SSH machine. Passwords and pasted private keys are persisted in your OS keyring.";
       return;
     }
 
@@ -173,6 +183,7 @@
     els.machineHost.textContent = profile.host || "-";
     els.machinePort.textContent = String(profile.port || 22);
     els.machineAuth.textContent = profile.authKind || "agent";
+    els.machineSecretState.textContent = profile.hasStoredSecret ? "stored in OS keyring" : profile.keyPath ? "key path reference" : "none";
   }
 
   function openCreateModal() {
@@ -182,7 +193,10 @@
     els.host.value = "";
     els.port.value = 22;
     els.authKind.value = "agent";
+    els.keySource.value = "path";
+    els.keyPath.value = "";
     els.secret.value = "";
+    els.keyContent.value = "";
     updateSecurityCopy();
     els.modalBackdrop.classList.remove("hidden");
   }
@@ -200,6 +214,9 @@
         host: els.host.value,
         port: Number(els.port.value || 22),
         authKind: els.authKind.value,
+        keySource: els.authKind.value === "private_key" ? els.keySource.value : "",
+        keyPath: els.authKind.value === "private_key" && els.keySource.value === "path" ? els.keyPath.value : "",
+        secretValue: resolveSecretValue(),
       };
 
       const profile = await window.go.main.App.SaveProfile(payload);
@@ -249,17 +266,50 @@
   }
 
   function updateSecurityCopy() {
+    els.keySourceWrap.classList.add("hidden");
+    els.keyPathWrap.classList.add("hidden");
+    els.secretWrap.classList.add("hidden");
+    els.keyContentWrap.classList.add("hidden");
+
     switch (els.authKind.value) {
       case "password":
-        els.securityCopy.textContent = "Password mode is planned, but persistence stays disabled until keyring integration lands.";
+        els.securityCopy.textContent = "Passwords are persisted in your OS keyring, not in profiles.json.";
+        els.modalSecurityCopy.textContent = "Passwords are persisted in your OS keyring, not in profiles.json.";
+        els.secret.placeholder = "Stored in OS keyring";
+        els.secretWrap.classList.remove("hidden");
         break;
       case "private_key":
-        els.securityCopy.textContent = "Private key mode will use safe file references or keyring-backed storage, not plaintext blobs.";
+        els.securityCopy.textContent = "Private key mode supports either a key path reference or pasted key content persisted in your OS keyring.";
+        els.keySourceWrap.classList.remove("hidden");
+        if (els.keySource.value === "content") {
+          els.keyContentWrap.classList.remove("hidden");
+          els.modalSecurityCopy.textContent = "Pasted private key content is persisted in your OS keyring.";
+        } else {
+          els.keyPathWrap.classList.remove("hidden");
+          els.modalSecurityCopy.textContent = "Key path mode stores only the filesystem path in the profile metadata.";
+        }
         break;
       default:
         els.securityCopy.textContent = "Agent mode is the safest default for the MVP and avoids local secret persistence entirely.";
+        els.modalSecurityCopy.textContent = "Agent mode avoids local secret persistence entirely.";
         break;
     }
+  }
+
+  function needsSecretValue() {
+    return els.authKind.value === "password" || (els.authKind.value === "private_key" && els.keySource.value === "content");
+  }
+
+  function resolveSecretValue() {
+    if (!needsSecretValue()) {
+      return "";
+    }
+
+    if (els.authKind.value === "private_key" && els.keySource.value === "content") {
+      return els.keyContent.value;
+    }
+
+    return els.secret.value;
   }
 
   function setStatus(message, isError) {

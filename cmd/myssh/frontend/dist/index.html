@@ -9,7 +9,7 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand">
+          <div class="brand">
           <div class="brand-mark">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 12 10 6v4h6V6l6 6-6 6v-4h-6v4z"></path>
@@ -18,6 +18,7 @@
           <div>
             <p class="eyebrow">MySSH</p>
             <h1>SSH Machines</h1>
+            <p class="brand-note">Dark secure desktop SSH workspace</p>
           </div>
         </div>
 
@@ -55,7 +56,7 @@
             <p class="eyebrow">Workspace</p>
             <h2 id="hero-title">No SSH selected</h2>
             <p class="hero-copy" id="hero-copy">
-              Start by adding an SSH machine. Passwords and keys still stay outside plain-text storage.
+              Start by adding an SSH machine. Passwords and pasted private keys are persisted in your OS keyring.
             </p>
           </div>
           <div class="hero-pill" id="ping-state">Booting UI</div>
@@ -137,6 +138,10 @@
                 <span>Authentication</span>
                 <strong id="machine-auth">agent</strong>
               </article>
+              <article class="detail-card">
+                <span>Secret Storage</span>
+                <strong id="machine-secret-state">none</strong>
+              </article>
             </div>
           </div>
         </section>
@@ -186,11 +191,30 @@
               <option value="password">password</option>
             </select>
           </label>
-          <label>
-            <span>Password / Key</span>
-            <input id="secret" type="password" placeholder="Not persisted yet" disabled />
+          <label class="hidden" id="key-source-wrap">
+            <span>Private Key Mode</span>
+            <select id="key-source">
+              <option value="path">key path</option>
+              <option value="content">paste key content</option>
+            </select>
+          </label>
+          <label class="hidden" id="key-path-wrap">
+            <span>Key Path</span>
+            <input id="key-path" type="text" placeholder="/home/mihai/.ssh/id_ed25519" />
+          </label>
+          <label class="hidden" id="secret-wrap">
+            <span>Password</span>
+            <input id="secret" type="password" placeholder="Stored in OS keyring" />
+          </label>
+          <label class="hidden" id="key-content-wrap">
+            <span>Private Key Content</span>
+            <textarea id="key-content" rows="8" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
           </label>
         </div>
+
+        <p class="modal-security-copy" id="modal-security-copy">
+          Agent mode avoids local secret persistence.
+        </p>
 
         <div class="modal-footer">
           <button class="ghost-button" id="cancel-modal">Cancel</button>
