@@ -40,6 +40,7 @@ type Manager struct {
 type connection struct {
 	profile        domain.Profile
 	secret         string
+	connectSecret  string
 	client         *ssh.Client
 	session        *ssh.Session
 	stdin          io.WriteCloser
@@ -51,12 +52,13 @@ func NewManager(emit EmitFunc) *Manager {
 	return &Manager{emit: emit}
 }
 
-func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret string) error {
+func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret string, connectSecret string) error {
 	m.Disconnect()
 
 	conn := &connection{
 		profile:        profile,
 		secret:         secret,
+		connectSecret:  connectSecret,
 		reconnectDelay: 3 * time.Second,
 	}
 
@@ -127,7 +129,7 @@ func (m *Manager) Disconnect() {
 }
 
 func (m *Manager) establish(ctx context.Context, conn *connection, attempt int) error {
-	client, session, stdin, stdout, stderr, err := dial(conn.profile, conn.secret)
+	client, session, stdin, stdout, stderr, err := dial(conn.profile, conn.secret, conn.connectSecret)
 	if err != nil {
 		return err
 	}
@@ -219,7 +221,7 @@ func (m *Manager) emitStatus(state string, profile domain.Profile, message strin
 	})
 }
 
-func dial(profile domain.Profile, secret string) (*ssh.Client, *ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
+func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Client, *ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
 	hostKeyCallback, err := knownHostsCallback()
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -290,6 +292,14 @@ func dial(profile domain.Profile, secret string) (*ssh.Client, *ssh.Session, io.
 		_ = session.Close()
 		_ = client.Close()
 		return nil, nil, nil, nil, nil, err
+	}
+
+	if connectSecret != "" {
+		if err := session.Setenv("SECRET", connectSecret); err != nil {
+			_ = session.Close()
+			_ = client.Close()
+			return nil, nil, nil, nil, nil, fmt.Errorf("set remote SECRET env: %w", err)
+		}
 	}
 
 	if err := session.Shell(); err != nil {

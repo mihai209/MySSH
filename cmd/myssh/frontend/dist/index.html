@@ -170,6 +170,8 @@
         </div>
         <div class="terminal-topbar-actions">
           <span class="status-chip" id="terminal-status-chip">Idle</span>
+          <button class="ghost-button" id="terminal-copy">Copy</button>
+          <button class="ghost-button" id="terminal-paste">Paste</button>
           <button class="ghost-button" id="terminal-gpu-toggle">GPU Off</button>
           <button class="ghost-button" id="terminal-back">Back</button>
         </div>
@@ -245,6 +247,10 @@
           <label class="hidden" id="secret-wrap">
             <span>Password</span>
             <input id="secret" type="password" placeholder="Stored in OS keyring" />
+          </label>
+          <label>
+            <span>SECRET Token</span>
+            <input id="connect-secret" type="password" placeholder="Optional remote SECRET stored in OS keyring" />
           </label>
           <label class="hidden" id="key-content-wrap">
             <span>Private Key Content</span>

@@ -30,16 +30,18 @@ const (
 )
 
 type Profile struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Username        string    `json:"username"`
-	Host            string    `json:"host"`
-	Port            int       `json:"port"`
-	AuthKind        AuthKind  `json:"auth_kind"`
-	KeySource       KeySource `json:"key_source,omitempty"`
-	KeyPath         string    `json:"key_path,omitempty"`
-	SecretRef       string    `json:"secret_ref,omitempty"`
-	HasStoredSecret bool      `json:"has_stored_secret,omitempty"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Username         string    `json:"username"`
+	Host             string    `json:"host"`
+	Port             int       `json:"port"`
+	AuthKind         AuthKind  `json:"auth_kind"`
+	KeySource        KeySource `json:"key_source,omitempty"`
+	KeyPath          string    `json:"key_path,omitempty"`
+	SecretRef        string    `json:"secret_ref,omitempty"`
+	HasStoredSecret  bool      `json:"has_stored_secret,omitempty"`
+	ConnectSecretRef string    `json:"connect_secret_ref,omitempty"`
+	HasConnectSecret bool      `json:"has_connect_secret,omitempty"`
 }
 
 func (p *Profile) Normalize() {

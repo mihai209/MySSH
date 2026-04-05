@@ -23,16 +23,17 @@ type App struct {
 }
 
 type ProfileDTO struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Username        string `json:"username"`
-	Host            string `json:"host"`
-	Port            int    `json:"port"`
-	AuthKind        string `json:"authKind"`
-	KeySource       string `json:"keySource,omitempty"`
-	KeyPath         string `json:"keyPath,omitempty"`
-	HasStoredSecret bool   `json:"hasStoredSecret"`
-	SecretRef       string `json:"secretRef,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Username         string `json:"username"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	AuthKind         string `json:"authKind"`
+	KeySource        string `json:"keySource,omitempty"`
+	KeyPath          string `json:"keyPath,omitempty"`
+	HasStoredSecret  bool   `json:"hasStoredSecret"`
+	SecretRef        string `json:"secretRef,omitempty"`
+	HasConnectSecret bool   `json:"hasConnectSecret"`
 }
 
 type DashboardDTO struct {
@@ -46,15 +47,16 @@ type DashboardDTO struct {
 }
 
 type SaveProfileInput struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Username    string `json:"username"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	AuthKind    string `json:"authKind"`
-	KeySource   string `json:"keySource"`
-	KeyPath     string `json:"keyPath"`
-	SecretValue string `json:"secretValue"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Username           string `json:"username"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	AuthKind           string `json:"authKind"`
+	KeySource          string `json:"keySource"`
+	KeyPath            string `json:"keyPath"`
+	SecretValue        string `json:"secretValue"`
+	ConnectSecretValue string `json:"connectSecretValue"`
 }
 
 func NewApp(service *appsvc.Service, secretStore *secret.Store, dataDir string) *App {
@@ -122,6 +124,7 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 	profile.Normalize()
 
 	existingRef := ""
+	existingConnectRef := ""
 	if strings.TrimSpace(input.ID) != "" {
 		profiles, err := a.service.ListProfiles()
 		if err != nil {
@@ -132,6 +135,9 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 				existingRef = existing.SecretRef
 				profile.SecretRef = existing.SecretRef
 				profile.HasStoredSecret = existing.HasStoredSecret
+				existingConnectRef = existing.ConnectSecretRef
+				profile.ConnectSecretRef = existing.ConnectSecretRef
+				profile.HasConnectSecret = existing.HasConnectSecret
 				break
 			}
 		}
@@ -161,6 +167,21 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 		profile.HasStoredSecret = false
 	}
 
+	connectSecretValue := strings.TrimSpace(input.ConnectSecretValue)
+	switch {
+	case connectSecretValue != "":
+		if profile.ConnectSecretRef == "" {
+			profile.ConnectSecretRef = "profile:" + profile.ID + ":connect-secret"
+		}
+		if err := a.secretStore.Set(profile.ConnectSecretRef, input.ConnectSecretValue); err != nil {
+			return ProfileDTO{}, fmt.Errorf("store connect secret in keyring: %w", err)
+		}
+		profile.HasConnectSecret = true
+	case existingConnectRef == "":
+		profile.ConnectSecretRef = ""
+		profile.HasConnectSecret = false
+	}
+
 	saved, err := a.service.AddProfile(profile)
 	if err != nil {
 		return ProfileDTO{}, err
@@ -181,12 +202,20 @@ func (a *App) DeleteProfile(id string) error {
 	}
 
 	for _, profile := range profiles {
-		if profile.ID == id && profile.SecretRef != "" {
+		if profile.ID != id {
+			continue
+		}
+		if profile.SecretRef != "" {
 			if err := a.secretStore.Delete(profile.SecretRef); err != nil {
 				return fmt.Errorf("delete secret from keyring: %w", err)
 			}
-			break
 		}
+		if profile.ConnectSecretRef != "" {
+			if err := a.secretStore.Delete(profile.ConnectSecretRef); err != nil {
+				return fmt.Errorf("delete connect secret from keyring: %w", err)
+			}
+		}
+		break
 	}
 
 	return a.service.DeleteProfile(id)
@@ -232,7 +261,15 @@ func (a *App) ConnectProfile(id string) error {
 		}
 	}
 
-	err = a.sshManager.Connect(a.ctx, profile, secretValue)
+	connectSecretValue := ""
+	if profile.ConnectSecretRef != "" {
+		connectSecretValue, err = a.secretStore.Get(profile.ConnectSecretRef)
+		if err != nil {
+			return fmt.Errorf("load connect secret from keyring: %w", err)
+		}
+	}
+
+	err = a.sshManager.Connect(a.ctx, profile, secretValue, connectSecretValue)
 	if err != nil {
 		var unknownHostErr *sshclient.UnknownHostError
 		if errors.As(err, &unknownHostErr) {
@@ -260,6 +297,24 @@ func (a *App) ResizeTerminal(cols int, rows int) error {
 	return a.sshManager.Resize(cols, rows)
 }
 
+func (a *App) CopyToClipboard(text string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.ClipboardSetText(a.ctx, text)
+}
+
+func (a *App) PasteFromClipboard() string {
+	if a.ctx == nil {
+		return ""
+	}
+	text, err := runtime.ClipboardGetText(a.ctx)
+	if err != nil {
+		return ""
+	}
+	return text
+}
+
 func (a *App) DisconnectTerminal() {
 	a.sshManager.Disconnect()
 }
@@ -279,15 +334,16 @@ func (a *App) TrustPendingHost() error {
 
 func toProfileDTO(profile domain.Profile) ProfileDTO {
 	return ProfileDTO{
-		ID:              profile.ID,
-		Name:            profile.Name,
-		Username:        profile.Username,
-		Host:            profile.Host,
-		Port:            profile.Port,
-		AuthKind:        string(profile.AuthKind),
-		KeySource:       string(profile.KeySource),
-		KeyPath:         profile.KeyPath,
-		HasStoredSecret: profile.HasStoredSecret,
-		SecretRef:       profile.SecretRef,
+		ID:               profile.ID,
+		Name:             profile.Name,
+		Username:         profile.Username,
+		Host:             profile.Host,
+		Port:             profile.Port,
+		AuthKind:         string(profile.AuthKind),
+		KeySource:        string(profile.KeySource),
+		KeyPath:          profile.KeyPath,
+		HasStoredSecret:  profile.HasStoredSecret,
+		SecretRef:        profile.SecretRef,
+		HasConnectSecret: profile.HasConnectSecret,
 	}
 }

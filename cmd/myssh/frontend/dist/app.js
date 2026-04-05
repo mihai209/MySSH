@@ -9,6 +9,7 @@
     fitAddon: null,
     webglAddon: null,
     webglEnabled: false,
+    terminalBuffer: "",
   };
 
   const els = {};
@@ -79,7 +80,10 @@
     els.terminalTrustButton = document.getElementById("terminal-trust-button");
     els.terminalContainer = document.getElementById("terminal-container");
     els.terminalGpuToggle = document.getElementById("terminal-gpu-toggle");
+    els.terminalCopy = document.getElementById("terminal-copy");
+    els.terminalPaste = document.getElementById("terminal-paste");
     els.terminalBack = document.getElementById("terminal-back");
+    els.connectSecret = document.getElementById("connect-secret");
   }
 
   function bindEvents() {
@@ -97,6 +101,8 @@
     els.terminalBack.addEventListener("click", closeTerminal);
     els.terminalTrustButton.addEventListener("click", trustPendingHost);
     els.terminalGpuToggle.addEventListener("click", toggleTerminalGpu);
+    els.terminalCopy.addEventListener("click", copyTerminalSelection);
+    els.terminalPaste.addEventListener("click", pasteIntoTerminal);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -235,6 +241,8 @@
     els.keySource.value = "path";
     els.keyPath.value = "";
     els.secret.value = "";
+    els.connectSecret.value = "";
+    els.connectSecret.placeholder = "Optional remote SECRET stored in OS keyring";
     els.keyContent.value = "";
     updateSecurityCopy();
     els.modalBackdrop.classList.remove("hidden");
@@ -259,6 +267,10 @@
     els.keySource.value = profile.keySource || "path";
     els.keyPath.value = profile.keyPath || "";
     els.secret.value = "";
+    els.connectSecret.value = "";
+    els.connectSecret.placeholder = profile.hasConnectSecret
+      ? "Stored in OS keyring"
+      : "Optional remote SECRET stored in OS keyring";
     els.keyContent.value = "";
     updateSecurityCopy();
     els.modalBackdrop.classList.remove("hidden");
@@ -280,6 +292,7 @@
         keySource: els.authKind.value === "private_key" ? els.keySource.value : "",
         keyPath: els.authKind.value === "private_key" && els.keySource.value === "path" ? els.keyPath.value : "",
         secretValue: resolveSecretValue(),
+        connectSecretValue: els.connectSecret.value,
       };
 
       const profile = await window.go.main.App.SaveProfile(payload);
@@ -396,6 +409,7 @@
 
   function openTerminal(profile) {
     state.terminalVisible = true;
+    state.terminalBuffer = "";
     els.terminalScreen.classList.remove("hidden");
     els.terminalTitle.textContent = profile.name || "SSH Session";
     els.terminalSubtitle.textContent = `${profile.username}@${profile.host}:${profile.port}`;
@@ -472,10 +486,18 @@
   }
 
   function appendTerminalOutput(chunk) {
+    const sanitized = sanitizeTerminalChunk(chunk);
+    if (!sanitized) {
+      return;
+    }
+    state.terminalBuffer += sanitized;
+    if (state.terminalBuffer.length > 1200000) {
+      state.terminalBuffer = state.terminalBuffer.slice(-900000);
+    }
     if (!state.terminal) {
       return;
     }
-    state.terminal.write(chunk);
+    state.terminal.write(sanitized);
   }
 
   function setTerminalLoader(visible, message) {
@@ -499,7 +521,7 @@
       cursorBlink: true,
       fontFamily: "DejaVu Sans Mono, Cascadia Mono, Fira Code, monospace",
       fontSize: 13,
-      lineHeight: 1.0,
+      lineHeight: 1.1,
       letterSpacing: 0,
       customGlyphs: false,
       allowTransparency: false,
@@ -509,8 +531,9 @@
         cursor: "#4fb3ff",
         selectionBackground: "rgba(79, 179, 255, 0.25)",
       },
-      scrollback: 5000,
+      scrollback: 2500,
       convertEol: false,
+      windowsMode: false,
     });
 
     state.fitAddon = new window.FitAddon.FitAddon();
@@ -519,6 +542,31 @@
     tryEnableWebgl();
     fitTerminal();
     window.setTimeout(() => fitTerminal(), 50);
+    if (state.terminalBuffer) {
+      state.terminal.write(state.terminalBuffer);
+    }
+
+    state.terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") {
+        return true;
+      }
+
+      const key = String(event.key || "").toLowerCase();
+      if (event.ctrlKey && event.shiftKey && key === "c") {
+        copyTerminalSelection();
+        return false;
+      }
+      if (event.ctrlKey && event.shiftKey && key === "v") {
+        pasteIntoTerminal();
+        return false;
+      }
+      if (event.shiftKey && key === "insert") {
+        pasteIntoTerminal();
+        return false;
+      }
+
+      return true;
+    });
 
     state.terminal.onData((data) => {
       window.go.main.App.SendTerminalInput(data).catch((error) => {
@@ -587,31 +635,22 @@
 
   function toggleTerminalGpu() {
     state.webglEnabled = !state.webglEnabled;
-
-    if (!state.terminal) {
-      updateGpuButton();
-      return;
-    }
-
-    if (!state.webglEnabled && state.webglAddon) {
-      try {
-        state.webglAddon.dispose();
-      } catch (_) {
-        // ignore dispose errors
-      }
-      state.webglAddon = null;
-    }
-
-    if (state.webglEnabled) {
-      tryEnableWebgl();
-    }
-
+    recreateTerminal();
     updateGpuButton();
-    fitTerminal();
   }
 
   function updateGpuButton() {
     els.terminalGpuToggle.textContent = state.webglEnabled ? "GPU On" : "GPU Off";
+  }
+
+  function recreateTerminal() {
+    if (!state.terminalVisible) {
+      return;
+    }
+    destroyTerminal();
+    ensureTerminal();
+    fitTerminal();
+    state.terminal.focus();
   }
 
   function debounceResizeTerminal() {
@@ -619,6 +658,34 @@
     debounceResizeTerminal._timer = window.setTimeout(() => {
       fitTerminal();
     }, 120);
+  }
+
+  async function copyTerminalSelection() {
+    const selection = state.terminal?.getSelection?.() || "";
+    if (!selection) {
+      setStatus("Nothing selected in terminal.");
+      return;
+    }
+    await window.go.main.App.CopyToClipboard(selection);
+    setStatus("Terminal selection copied.");
+  }
+
+  async function pasteIntoTerminal() {
+    if (!state.terminalVisible) {
+      return;
+    }
+    const text = await window.go.main.App.PasteFromClipboard();
+    if (!text) {
+      return;
+    }
+    await window.go.main.App.SendTerminalInput(text);
+  }
+
+  function sanitizeTerminalChunk(chunk) {
+    return String(chunk || "")
+      .replace(/\u001b]1337;File=[\s\S]*?(?:\u0007|\u001b\\)/g, "")
+      .replace(/\u001b_[\s\S]*?(?:\u0007|\u001b\\)/g, "")
+      .replace(/\u001bP[\s\S]*?\u001b\\/g, "");
   }
 
   function escapeHtml(value) {
