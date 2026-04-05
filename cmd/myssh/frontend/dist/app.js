@@ -3,6 +3,7 @@
     profiles: [],
     filtered: [],
     selectedId: "",
+    editingId: "",
     terminalVisible: false,
     terminal: null,
     fitAddon: null,
@@ -47,9 +48,11 @@
     els.closeModal = document.getElementById("close-modal");
     els.cancelModal = document.getElementById("cancel-modal");
     els.saveProfile = document.getElementById("save-profile");
+    els.editProfile = document.getElementById("edit-profile");
     els.connectProfile = document.getElementById("connect-profile");
     els.deleteProfile = document.getElementById("delete-profile");
     els.modalTitle = document.getElementById("modal-title");
+    els.modalNote = document.getElementById("modal-note");
     els.name = document.getElementById("name");
     els.username = document.getElementById("username");
     els.host = document.getElementById("host");
@@ -84,6 +87,7 @@
     els.closeModal.addEventListener("click", closeModal);
     els.cancelModal.addEventListener("click", closeModal);
     els.saveProfile.addEventListener("click", saveProfile);
+    els.editProfile.addEventListener("click", openEditModal);
     els.connectProfile.addEventListener("click", connectProfile);
     els.deleteProfile.addEventListener("click", deleteProfile);
     els.authKind.addEventListener("change", updateSecurityCopy);
@@ -194,6 +198,7 @@
       els.heroCopy.textContent = hasProfiles
         ? "Select a machine from the left or add a new one."
         : "Start by adding an SSH machine. Passwords and pasted private keys are persisted in your OS keyring.";
+      els.editProfile.disabled = true;
       els.connectProfile.disabled = true;
       return;
     }
@@ -210,11 +215,14 @@
     els.machinePort.textContent = String(profile.port || 22);
     els.machineAuth.textContent = profile.authKind || "agent";
     els.machineSecretState.textContent = profile.hasStoredSecret ? "stored in OS keyring" : profile.keyPath ? "key path reference" : "none";
+    els.editProfile.disabled = false;
     els.connectProfile.disabled = !(profile.authKind === "agent" || profile.authKind === "password");
   }
 
   function openCreateModal() {
+    state.editingId = "";
     els.modalTitle.textContent = "New SSH";
+    els.modalNote.textContent = "Create a new SSH machine profile.";
     els.name.value = "";
     els.username.value = "";
     els.host.value = "";
@@ -228,6 +236,30 @@
     els.modalBackdrop.classList.remove("hidden");
   }
 
+  function openEditModal() {
+    const profile = state.profiles.find((item) => item.id === state.selectedId);
+    if (!profile) {
+      return;
+    }
+
+    state.editingId = profile.id || "";
+    els.modalTitle.textContent = "Edit SSH";
+    els.modalNote.textContent = profile.hasStoredSecret
+      ? "Leave the secret field empty to keep the existing keyring value."
+      : "Update the machine metadata or authentication mode.";
+    els.name.value = profile.name || "";
+    els.username.value = profile.username || "";
+    els.host.value = profile.host || "";
+    els.port.value = profile.port || 22;
+    els.authKind.value = profile.authKind || "agent";
+    els.keySource.value = profile.keySource || "path";
+    els.keyPath.value = profile.keyPath || "";
+    els.secret.value = "";
+    els.keyContent.value = "";
+    updateSecurityCopy();
+    els.modalBackdrop.classList.remove("hidden");
+  }
+
   function closeModal() {
     els.modalBackdrop.classList.add("hidden");
   }
@@ -235,7 +267,7 @@
   async function saveProfile() {
     try {
       const payload = {
-        id: "",
+        id: state.editingId,
         name: els.name.value,
         username: els.username.value,
         host: els.host.value,
@@ -248,6 +280,7 @@
 
       const profile = await window.go.main.App.SaveProfile(payload);
       state.selectedId = profile.id;
+      state.editingId = "";
       closeModal();
       await refreshDashboard();
       renderSelection();
@@ -458,8 +491,11 @@
 
     state.terminal = new window.Terminal({
       cursorBlink: true,
-      fontFamily: "Cascadia Code, Fira Code, monospace",
+      fontFamily: "DejaVu Sans Mono, Cascadia Mono, Fira Code, monospace",
       fontSize: 13,
+      lineHeight: 1.12,
+      letterSpacing: 0,
+      customGlyphs: false,
       theme: {
         background: "#050b12",
         foreground: "#d7e8f7",
@@ -482,6 +518,7 @@
     }
     state.terminal.open(els.terminalContainer);
     fitTerminal();
+    window.setTimeout(() => fitTerminal(), 50);
 
     state.terminal.onData((data) => {
       window.go.main.App.SendTerminalInput(data).catch((error) => {

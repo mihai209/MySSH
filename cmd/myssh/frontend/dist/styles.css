@@ -120,6 +120,12 @@ textarea {
   font-size: 13px;
 }
 
+.modal-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .search-wrap,
 .modal-grid label {
   display: flex;
@@ -476,6 +482,24 @@ button:disabled {
   border: 1px solid rgba(79, 179, 255, 0.12);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   overflow: auto;
+}
+
+.terminal-output .xterm,
+.terminal-output .xterm-viewport,
+.terminal-output .xterm-screen {
+  height: 100%;
+}
+
+.terminal-output .xterm {
+  padding: 2px 4px;
+}
+
+.terminal-output .xterm-rows {
+  line-height: 1.12 !important;
+}
+
+.terminal-output .xterm-screen canvas {
+  top: 0 !important;
 }
 
 .modal {

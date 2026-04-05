@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"syscall"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -20,6 +22,8 @@ import (
 var assets embed.FS
 
 func main() {
+	_ = os.Setenv("JSC_SIGNAL_FOR_GC", strconv.Itoa(int(syscall.SIGUSR2)))
+
 	dataDirFlag := flag.String("data-dir", "", "override the app data directory")
 	flag.Parse()
 
