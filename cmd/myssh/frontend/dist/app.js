@@ -109,22 +109,38 @@
     els.terminalPaste = document.getElementById("terminal-paste");
     els.terminalBack = document.getElementById("terminal-back");
     els.sftpScreen = document.getElementById("sftp-screen");
+    els.sftpBrowser = document.getElementById("sftp-browser");
     els.sftpTitle = document.getElementById("sftp-title");
     els.sftpSubtitle = document.getElementById("sftp-subtitle");
     els.sftpStatusChip = document.getElementById("sftp-status-chip");
     els.sftpLoader = document.getElementById("sftp-loader");
     els.sftpLoaderText = document.getElementById("sftp-loader-text");
     els.sftpPath = document.getElementById("sftp-path");
+    els.sftpBreadcrumb = document.getElementById("sftp-breadcrumb");
+    els.sftpFilter = document.getElementById("sftp-filter");
     els.sftpList = document.getElementById("sftp-list");
     els.sftpRefresh = document.getElementById("sftp-refresh");
     els.sftpUp = document.getElementById("sftp-up");
     els.sftpUpload = document.getElementById("sftp-upload");
     els.sftpMkdir = document.getElementById("sftp-mkdir");
+    els.sftpRefreshInline = document.getElementById("sftp-refresh-inline");
+    els.sftpUpInline = document.getElementById("sftp-up-inline");
+    els.sftpUploadInline = document.getElementById("sftp-upload-inline");
+    els.sftpMkdirInline = document.getElementById("sftp-mkdir-inline");
+    els.sftpRefresh = els.sftpRefresh || els.sftpRefreshInline;
+    els.sftpUp = els.sftpUp || els.sftpUpInline;
+    els.sftpUpload = els.sftpUpload || els.sftpUploadInline;
+    els.sftpMkdir = els.sftpMkdir || els.sftpMkdirInline;
     els.sftpClose = document.getElementById("sftp-close");
     els.sftpSelectAll = document.getElementById("sftp-select-all");
     els.sftpDownloadSelected = document.getElementById("sftp-download-selected");
     els.sftpDeleteSelected = document.getElementById("sftp-delete-selected");
     els.sftpDropzone = document.getElementById("sftp-dropzone");
+    els.sftpCurrentHost = document.getElementById("sftp-current-host");
+    els.sftpCurrentUser = document.getElementById("sftp-current-user");
+    els.sftpCurrentAuth = document.getElementById("sftp-current-auth");
+    els.sftpSelectionCount = document.getElementById("sftp-selection-count");
+    els.sftpSelectionCopy = document.getElementById("sftp-selection-copy");
     els.splitResizer = document.getElementById("split-resizer");
     els.toastStack = document.getElementById("toast-stack");
     els.workspaceBody = document.querySelector(".workspace-body");
@@ -159,6 +175,7 @@
     els.sftpUpload.addEventListener("click", uploadToSFTP);
     els.sftpMkdir.addEventListener("click", mkdirInSFTP);
     els.sftpClose.addEventListener("click", closeSFTP);
+    els.sftpFilter.addEventListener("input", renderSFTPEntries);
     els.sftpSelectAll.addEventListener("click", toggleSelectAllSFTP);
     els.sftpDownloadSelected.addEventListener("click", downloadSelectedSFTP);
     els.sftpDeleteSelected.addEventListener("click", deleteSelectedSFTP);
@@ -472,6 +489,7 @@
     state.sftp.parent = "";
     state.sftp.entries = [];
     state.sftp.selectedPaths = [];
+    els.sftpFilter.value = "";
     syncSFTPView();
     setSFTPLoader(true, `Opening SFTP for ${profile.host}...`);
 
@@ -753,18 +771,29 @@
 
   function syncSFTPView() {
     els.sftpScreen.classList.toggle("hidden", !state.sftp.visible);
+    els.sftpBrowser.classList.toggle("hidden", !state.sftp.visible);
     els.workspaceBody.classList.toggle("split", state.sftp.visible);
     els.splitResizer.classList.toggle("hidden", !state.sftp.visible);
     els.workspaceBody.style.setProperty("--sftp-width", `${state.splitWidth}px`);
     if (!state.sftp.visible) {
       els.terminalSFTPToggle.textContent = "SFTP";
+      els.terminalTitle.textContent = activeSession()?.title || "SSH Session";
+      els.terminalSubtitle.textContent = activeSession()?.subtitle || "Waiting for connection...";
       return;
     }
     els.terminalSFTPToggle.textContent = "Hide SFTP";
-    els.sftpTitle.textContent = `${state.sftp.profileName} SFTP`;
-    els.sftpSubtitle.textContent = state.sftp.profileName || "SFTP Browser";
+    els.terminalTitle.textContent = "SFTP Workspace";
+    els.terminalSubtitle.textContent = state.sftp.profileName || "Remote file browser";
+    els.sftpTitle.textContent = "Host Details";
+    els.sftpSubtitle.textContent = state.sftp.profileName || "Connected SFTP session";
     els.sftpPath.textContent = state.sftp.path || "Waiting for path...";
     els.sftpUp.disabled = !state.sftp.parent;
+    els.sftpUpInline.disabled = !state.sftp.parent;
+    const profile = state.profiles.find((item) => item.id === state.sftp.profileId);
+    els.sftpCurrentHost.textContent = profile?.name || state.sftp.profileName || "-";
+    els.sftpCurrentUser.textContent = profile ? `${profile.username}@${profile.host}:${profile.port}` : "Waiting for SSH profile...";
+    els.sftpCurrentAuth.textContent = `Authentication: ${profile?.authKind || "-"}`;
+    renderSFTPBreadcrumb();
     renderSFTPEntries();
   }
 
@@ -775,6 +804,37 @@
     els.sftpSelectAll.textContent = selectedCount === state.sftp.entries.length && hasEntries ? "Clear Selection" : "Select All";
     els.sftpDownloadSelected.disabled = selectedCount === 0;
     els.sftpDeleteSelected.disabled = selectedCount === 0;
+    els.sftpSelectionCount.textContent = `${selectedCount} selected`;
+    els.sftpSelectionCopy.textContent = selectedCount
+      ? "Bulk download and delete act on the current selection."
+      : "Use multi-select for bulk download or delete.";
+  }
+
+  function renderSFTPBreadcrumb() {
+    els.sftpBreadcrumb.innerHTML = "";
+    const path = state.sftp.path || "/";
+    const rootButton = document.createElement("button");
+    rootButton.type = "button";
+    rootButton.className = "sftp-breadcrumb-part";
+    rootButton.textContent = path.startsWith("/") ? "/" : ".";
+    rootButton.addEventListener("click", () => navigateSFTP(path.startsWith("/") ? "/" : "."));
+    els.sftpBreadcrumb.appendChild(rootButton);
+
+    const segments = path.split("/").filter(Boolean);
+    let current = path.startsWith("/") ? "" : ".";
+    segments.forEach((segment) => {
+      const sep = document.createElement("span");
+      sep.className = "sftp-breadcrumb-sep";
+      sep.textContent = "›";
+      els.sftpBreadcrumb.appendChild(sep);
+      current = current === "" ? `/${segment}` : `${current}/${segment}`.replace("//", "/");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sftp-breadcrumb-part";
+      button.textContent = segment;
+      button.addEventListener("click", () => navigateSFTP(current));
+      els.sftpBreadcrumb.appendChild(button);
+    });
   }
 
   function setSFTPLoader(visible, text) {
@@ -798,28 +858,35 @@
 
   function renderSFTPEntries() {
     els.sftpList.innerHTML = "";
-    if (!state.sftp.entries.length) {
+    const query = String(els.sftpFilter.value || "").trim().toLowerCase();
+    const visibleEntries = state.sftp.entries.filter((entry) =>
+      !query || String(entry.name || "").toLowerCase().includes(query),
+    );
+
+    if (!visibleEntries.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = "No files in this folder.";
+      empty.textContent = query ? "No files match this filter." : "No files in this folder.";
       els.sftpList.appendChild(empty);
       syncSFTPBulkActions();
       return;
     }
 
-    state.sftp.entries.forEach((entry) => {
+    visibleEntries.forEach((entry) => {
       const row = document.createElement("div");
       row.className = `sftp-entry${entry.isDir ? " sftp-entry-dir" : ""}`;
       if (state.sftp.selectedPaths.includes(entry.path)) {
         row.classList.add("selected");
       }
+      const kind = entry.isDir ? "folder" : detectFileKind(entry.name);
       row.innerHTML = `
         <input class="sftp-entry-check" type="checkbox" data-sftp-select="${escapeHtml(entry.path)}" ${state.sftp.selectedPaths.includes(entry.path) ? "checked" : ""} />
         <div class="sftp-entry-main">
           <div class="sftp-entry-name">${escapeHtml(entry.name)}</div>
-          <div class="sftp-entry-meta">${escapeHtml(entry.mode)} • ${entry.isDir ? "directory" : `${entry.size} bytes`}</div>
         </div>
         <div class="sftp-entry-meta">${escapeHtml(formatTimestamp(entry.modified))}</div>
+        <div class="sftp-entry-meta">${entry.isDir ? "--" : escapeHtml(formatSize(entry.size))}</div>
+        <div class="sftp-entry-meta">${escapeHtml(kind)}</div>
         <div class="sftp-entry-actions">
           <button class="ghost-button" data-sftp-open="${escapeHtml(entry.path)}">${entry.isDir ? "Open" : "Download"}</button>
           <button class="ghost-button" data-sftp-rename="${escapeHtml(entry.path)}">Rename</button>
@@ -859,6 +926,7 @@
       entries: [],
       selectedPaths: [],
     };
+    els.sftpFilter.value = "";
     syncSFTPView();
     showToast("SFTP session closed.");
   }
@@ -875,10 +943,16 @@
   }
 
   function toggleSelectAllSFTP() {
-    if (state.sftp.selectedPaths.length === state.sftp.entries.length) {
-      state.sftp.selectedPaths = [];
+    const query = String(els.sftpFilter.value || "").trim().toLowerCase();
+    const visibleEntries = state.sftp.entries.filter((entry) =>
+      !query || String(entry.name || "").toLowerCase().includes(query),
+    );
+    const visiblePaths = visibleEntries.map((entry) => entry.path);
+    const allVisibleSelected = visiblePaths.length > 0 && visiblePaths.every((path) => state.sftp.selectedPaths.includes(path));
+    if (allVisibleSelected) {
+      state.sftp.selectedPaths = state.sftp.selectedPaths.filter((path) => !visiblePaths.includes(path));
     } else {
-      state.sftp.selectedPaths = state.sftp.entries.map((entry) => entry.path);
+      state.sftp.selectedPaths = Array.from(new Set([...state.sftp.selectedPaths, ...visiblePaths]));
     }
     renderSFTPEntries();
   }
@@ -1099,6 +1173,8 @@
     if (state.sftp.visible && (session.kind !== "ssh" || state.sftp.profileId !== session.profileId)) {
       state.sftp.visible = false;
       syncSFTPView();
+    } else if (state.sftp.visible) {
+      syncSFTPView();
     }
 
     destroyTerminal();
@@ -1142,9 +1218,9 @@
     els.terminalReconnect.disabled = !activeSession();
     els.terminalRename.disabled = !activeSession();
     els.terminalClose.disabled = !activeSession();
-    els.terminalCopy.disabled = !activeSession();
-    els.terminalPaste.disabled = !activeSession();
-    els.terminalGpuToggle.disabled = !activeSession();
+    els.terminalCopy.disabled = !activeSession() || state.sftp.visible;
+    els.terminalPaste.disabled = !activeSession() || state.sftp.visible;
+    els.terminalGpuToggle.disabled = !activeSession() || state.sftp.visible;
     els.terminalSFTPToggle.disabled = !activeSession() || activeSession()?.kind !== "ssh";
     els.terminalReconnect.textContent = activeSession()?.kind === "local" ? "Reopen" : "Reconnect";
     Array.from(els.terminalTabs.querySelectorAll("[data-session-close]")).forEach((closeButton) => {
@@ -1666,5 +1742,28 @@
       return value;
     }
     return date.toLocaleString();
+  }
+
+  function formatSize(value) {
+    const size = Number(value || 0);
+    if (!Number.isFinite(size) || size < 1024) {
+      return `${size || 0} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KB`;
+    }
+    if (size < 1024 * 1024 * 1024) {
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+
+  function detectFileKind(name) {
+    const value = String(name || "");
+    const parts = value.split(".");
+    if (parts.length < 2) {
+      return "file";
+    }
+    return `${parts.pop().toLowerCase()} file`;
   }
 })();

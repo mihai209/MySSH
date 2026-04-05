@@ -215,6 +215,33 @@
 
       <div class="workspace-body">
         <div class="terminal-pane">
+          <section class="sftp-browser hidden" id="sftp-browser">
+            <header class="sftp-browser-toolbar">
+              <div class="sftp-browser-tools">
+                <button class="ghost-button" id="sftp-up-inline">Up</button>
+                <button class="ghost-button" id="sftp-refresh-inline">Refresh</button>
+                <button class="ghost-button" id="sftp-upload-inline">Upload</button>
+                <button class="ghost-button" id="sftp-mkdir-inline">New Folder</button>
+              </div>
+              <label class="sftp-filter-wrap">
+                <span>Filter</span>
+                <input id="sftp-filter" type="text" placeholder="Search files and folders..." />
+              </label>
+            </header>
+
+            <div class="sftp-breadcrumb" id="sftp-breadcrumb"></div>
+
+            <div class="sftp-browser-head">
+              <span></span>
+              <span>Name</span>
+              <span>Date Modified</span>
+              <span>Size</span>
+              <span>Kind</span>
+              <span>Actions</span>
+            </div>
+
+            <div class="sftp-list" id="sftp-list"></div>
+          </section>
           <div class="terminal-output" id="terminal-container"></div>
         </div>
         <div class="split-resizer hidden" id="split-resizer" role="separator" aria-orientation="vertical" tabindex="0"></div>
@@ -222,15 +249,11 @@
           <header class="sftp-pane-header">
             <div>
               <p class="eyebrow">SFTP</p>
-              <h3 id="sftp-title">SFTP Browser</h3>
+              <h3 id="sftp-title">Select Host</h3>
               <p class="terminal-subtitle" id="sftp-subtitle">Waiting for session...</p>
             </div>
             <div class="terminal-topbar-actions">
               <span class="status-chip" id="sftp-status-chip">Idle</span>
-              <button class="ghost-button" id="sftp-upload">Upload</button>
-              <button class="ghost-button" id="sftp-refresh">Refresh</button>
-              <button class="ghost-button" id="sftp-up">Up</button>
-              <button class="ghost-button" id="sftp-mkdir">New Folder</button>
               <button class="ghost-button" id="sftp-close">Close</button>
             </div>
           </header>
@@ -242,7 +265,7 @@
 
           <div class="sftp-toolbar">
             <div class="info-card sftp-path-card">
-              <span>Path</span>
+              <span>Remote Path</span>
               <p id="sftp-path">/</p>
             </div>
             <div class="sftp-bulk-actions">
@@ -252,11 +275,22 @@
             </div>
           </div>
 
+          <div class="sftp-host-card">
+            <span>Connected Host</span>
+            <strong id="sftp-current-host">-</strong>
+            <p id="sftp-current-user">Waiting for SSH profile...</p>
+            <p id="sftp-current-auth">Authentication: -</p>
+          </div>
+
+          <div class="sftp-host-card">
+            <span>Selection</span>
+            <strong id="sftp-selection-count">0 selected</strong>
+            <p id="sftp-selection-copy">Use multi-select for bulk download or delete.</p>
+          </div>
+
           <div class="sftp-dropzone" id="sftp-dropzone">
             Drop files here to upload into the current folder.
           </div>
-
-          <div class="sftp-list" id="sftp-list"></div>
         </aside>
       </div>
     </section>
