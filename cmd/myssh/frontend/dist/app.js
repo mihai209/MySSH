@@ -10,6 +10,8 @@
     webglAddon: null,
     webglEnabled: false,
     terminalBuffer: "",
+    pendingTerminalWrite: "",
+    terminalFlushScheduled: false,
   };
 
   const els = {};
@@ -343,14 +345,14 @@
     openTerminal(profile);
     setTerminalLoader(true, `Connecting to ${profile.host}...`);
     setTerminalStatus("Connecting");
-    appendTerminalOutput(`[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\n`);
+    appendTerminalOutput(`[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\r\n`);
 
     try {
       await window.go.main.App.ConnectProfile(profile.id);
     } catch (error) {
       setTerminalLoader(false);
       setTerminalStatus("Error");
-      appendTerminalOutput(`[MySSH] Connection error: ${String(error)}\n`);
+      appendTerminalOutput(`[MySSH] Connection error: ${String(error)}\r\n`);
       setStatus(String(error), true);
     }
   }
@@ -457,7 +459,7 @@
     }
 
     if (state.terminalVisible) {
-      appendTerminalOutput(`[MySSH] ${message}\n`);
+      appendTerminalOutput(`[MySSH] ${message}\r\n`);
     }
   }
 
@@ -470,7 +472,7 @@
     els.terminalTrustCopy.textContent = `${payload?.message || "Unknown host key"}\n${payload?.fingerprint || ""}`;
     setTerminalLoader(false);
     setTerminalStatus("Trust Required");
-    appendTerminalOutput(`[MySSH] Unknown host key: ${payload?.fingerprint || "unknown"}\n`);
+    appendTerminalOutput(`[MySSH] Unknown host key: ${payload?.fingerprint || "unknown"}\r\n`);
   }
 
   async function trustPendingHost() {
@@ -478,10 +480,10 @@
       await window.go.main.App.TrustPendingHost();
       els.terminalTrust.classList.add("hidden");
       setTerminalStatus("Trusted");
-      appendTerminalOutput("[MySSH] Host key trusted. Reconnect now.\n");
+      appendTerminalOutput("[MySSH] Host key trusted. Reconnect now.\r\n");
       await connectProfile();
     } catch (error) {
-      appendTerminalOutput(`[MySSH] Trust error: ${String(error)}\n`);
+      appendTerminalOutput(`[MySSH] Trust error: ${String(error)}\r\n`);
     }
   }
 
@@ -497,7 +499,7 @@
     if (!state.terminal) {
       return;
     }
-    state.terminal.write(sanitized);
+    queueTerminalWrite(sanitized);
   }
 
   function setTerminalLoader(visible, message) {
@@ -531,9 +533,13 @@
         cursor: "#4fb3ff",
         selectionBackground: "rgba(79, 179, 255, 0.25)",
       },
-      scrollback: 2500,
-      convertEol: false,
+      scrollback: 1200,
+      convertEol: true,
       windowsMode: false,
+      allowProposedApi: false,
+      smoothScrollDuration: 0,
+      fastScrollModifier: "alt",
+      fastScrollSensitivity: 1,
     });
 
     state.fitAddon = new window.FitAddon.FitAddon();
@@ -543,7 +549,7 @@
     fitTerminal();
     window.setTimeout(() => fitTerminal(), 50);
     if (state.terminalBuffer) {
-      state.terminal.write(state.terminalBuffer);
+      queueTerminalWrite(state.terminalBuffer);
     }
 
     state.terminal.attachCustomKeyEventHandler((event) => {
@@ -570,7 +576,7 @@
 
     state.terminal.onData((data) => {
       window.go.main.App.SendTerminalInput(data).catch((error) => {
-        appendTerminalOutput(`\n[MySSH] Input error: ${String(error)}\n`);
+        appendTerminalOutput(`\r\n[MySSH] Input error: ${String(error)}\r\n`);
       });
     });
 
@@ -590,6 +596,8 @@
   }
 
   function destroyTerminal() {
+    state.pendingTerminalWrite = "";
+    state.terminalFlushScheduled = false;
     if (state.webglAddon) {
       try {
         state.webglAddon.dispose();
@@ -643,6 +651,25 @@
     els.terminalGpuToggle.textContent = state.webglEnabled ? "GPU On" : "GPU Off";
   }
 
+  function queueTerminalWrite(chunk) {
+    state.pendingTerminalWrite += chunk;
+    if (state.terminalFlushScheduled) {
+      return;
+    }
+    state.terminalFlushScheduled = true;
+    window.requestAnimationFrame(flushTerminalWrite);
+  }
+
+  function flushTerminalWrite() {
+    state.terminalFlushScheduled = false;
+    if (!state.terminal || !state.pendingTerminalWrite) {
+      return;
+    }
+    const chunk = state.pendingTerminalWrite;
+    state.pendingTerminalWrite = "";
+    state.terminal.write(chunk);
+  }
+
   function recreateTerminal() {
     if (!state.terminalVisible) {
       return;
@@ -684,7 +711,9 @@
   function sanitizeTerminalChunk(chunk) {
     return String(chunk || "")
       .replace(/\u001b]1337;File=[\s\S]*?(?:\u0007|\u001b\\)/g, "")
+      .replace(/\u001b\]52;[\s\S]*?(?:\u0007|\u001b\\)/g, "")
       .replace(/\u001b_[\s\S]*?(?:\u0007|\u001b\\)/g, "")
+      .replace(/\u001bP(?:q|0;1;q)[\s\S]*?\u001b\\/g, "")
       .replace(/\u001bP[\s\S]*?\u001b\\/g, "");
   }
 

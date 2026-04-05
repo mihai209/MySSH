@@ -477,11 +477,13 @@ button:disabled {
   flex: 1;
   margin: 0;
   padding: 0;
+  display: flex;
+  min-height: 0;
   border-radius: 22px;
   background: rgba(5, 11, 18, 0.94);
   border: 1px solid rgba(79, 179, 255, 0.12);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
-  overflow: auto;
+  overflow: hidden;
 }
 
 .terminal-output .xterm,
@@ -491,7 +493,14 @@ button:disabled {
 }
 
 .terminal-output .xterm {
-  padding: 10px 12px;
+  flex: 1;
+  padding: 12px 14px;
+}
+
+.terminal-output .xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: thin;
 }
 
 .modal {
