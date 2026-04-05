@@ -377,6 +377,11 @@
     try {
       const backendSessionId = await window.go.main.App.ConnectProfile(profile.id);
       attachBackendSessionToTab(tab.id, backendSessionId);
+      updateSession(tab.id, {
+        status: "Connected",
+        loaderVisible: false,
+        loaderText: "",
+      });
     } catch (error) {
       updateSession(tab.id, {
         loaderVisible: false,
@@ -401,6 +406,11 @@
     try {
       const backendSessionId = await window.go.main.App.ConnectLocalShell();
       attachBackendSessionToTab(tab.id, backendSessionId);
+      updateSession(tab.id, {
+        status: "Local",
+        loaderVisible: false,
+        loaderText: "",
+      });
     } catch (error) {
       updateSession(tab.id, {
         loaderVisible: false,
