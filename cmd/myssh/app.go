@@ -106,6 +106,10 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 	return toProfileDTO(saved), nil
 }
 
+func (a *App) DeleteProfile(id string) error {
+	return a.service.DeleteProfile(strings.TrimSpace(id))
+}
+
 func (a *App) Ping() string {
 	return fmt.Sprintf("MySSH backend ready: %s", a.dataDir)
 }

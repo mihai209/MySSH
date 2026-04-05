@@ -53,6 +53,19 @@ func (r *ProfileRepository) Save(profile domain.Profile) error {
 	return r.save(state)
 }
 
+func (r *ProfileRepository) Delete(id string) error {
+	state, err := r.load()
+	if err != nil {
+		return err
+	}
+
+	state.Profiles = slices.DeleteFunc(state.Profiles, func(profile domain.Profile) bool {
+		return profile.ID == id
+	})
+
+	return r.save(state)
+}
+
 type profileState struct {
 	Profiles []domain.Profile `json:"profiles"`
 }

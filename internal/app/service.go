@@ -5,6 +5,7 @@ import "myssh/internal/domain"
 type ProfileRepository interface {
 	List() ([]domain.Profile, error)
 	Save(domain.Profile) error
+	Delete(string) error
 }
 
 type Service struct {
@@ -30,4 +31,12 @@ func (s *Service) AddProfile(profile domain.Profile) (domain.Profile, error) {
 	}
 
 	return profile, nil
+}
+
+func (s *Service) DeleteProfile(id string) error {
+	if id == "" {
+		return nil
+	}
+
+	return s.repo.Delete(id)
 }

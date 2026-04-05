@@ -7,108 +7,196 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">MySSH</p>
-          <h1>Lightweight SSH workspace</h1>
-          <p class="subtitle">
-            Save machines, browse targets fast, and prepare for proper secure secret handling.
-          </p>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 12 10 6v4h6V6l6 6-6 6v-4h-6v4z"></path>
+            </svg>
+          </div>
+          <div>
+            <p class="eyebrow">MySSH</p>
+            <h1>SSH Machines</h1>
+          </div>
         </div>
-        <div class="hero-pill" id="ping-state">Booting UI</div>
-      </header>
 
-      <main class="layout">
-        <section class="panel sidebar">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Connections</p>
-              <h2>Your machines</h2>
-            </div>
-            <button class="ghost-button" id="new-profile">New</button>
+        <label class="search-wrap">
+          <span>Search</span>
+          <input id="search" type="search" placeholder="name, username, host" />
+        </label>
+
+        <div class="sidebar-stats">
+          <div class="stat-card">
+            <span>Total</span>
+            <strong id="profile-count">0</strong>
           </div>
-
-          <label class="search-wrap">
-            <span>Search</span>
-            <input id="search" type="search" placeholder="name, username, host" />
-          </label>
-
-          <div class="stats">
-            <article class="stat-card">
-              <span>Profiles</span>
-              <strong id="profile-count">0</strong>
-            </article>
-            <article class="stat-card">
-              <span>Recommended</span>
-              <strong id="recommended-auth">agent</strong>
-            </article>
+          <div class="stat-card">
+            <span>Recommended</span>
+            <strong id="recommended-auth">agent</strong>
           </div>
+        </div>
 
-          <div class="connection-list" id="profile-list"></div>
+        <button class="primary-button" id="new-profile">
+          <span class="button-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M11 5h2v14h-2zM5 11h14v2H5z"></path>
+            </svg>
+          </span>
+          Add SSH
+        </button>
+
+        <div class="machine-list" id="profile-list"></div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="hero-card">
+          <div>
+            <p class="eyebrow">Workspace</p>
+            <h2 id="hero-title">No SSH selected</h2>
+            <p class="hero-copy" id="hero-copy">
+              Start by adding an SSH machine. Passwords and keys still stay outside plain-text storage.
+            </p>
+          </div>
+          <div class="hero-pill" id="ping-state">Booting UI</div>
+        </header>
+
+        <section class="overview-grid">
+          <article class="info-card">
+            <span>Security</span>
+            <p id="security-copy">Agent mode is the safest default for the MVP.</p>
+          </article>
+          <article class="info-card">
+            <span>Storage</span>
+            <p id="data-dir">Loading...</p>
+          </article>
+          <article class="info-card">
+            <span>Auth Mix</span>
+            <p id="auth-mix">agent 0 | key 0 | password 0</p>
+          </article>
         </section>
 
-        <section class="panel detail">
-          <div class="panel-header">
-            <div>
-              <p class="panel-kicker">Details</p>
-              <h2 id="detail-title">New Connection</h2>
+        <section class="machine-stage" id="machine-stage">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-graphic">
+              <svg viewBox="0 0 64 64" aria-hidden="true">
+                <rect x="10" y="16" width="44" height="30" rx="8"></rect>
+                <path d="M24 28h16M24 36h10"></path>
+              </svg>
             </div>
-            <div class="status-chip">Wails UI</div>
+            <h3>No SSH added yet</h3>
+            <p>Add your first machine to start building your SSH workspace.</p>
+            <button class="primary-button" id="empty-add-button">Add first SSH</button>
           </div>
 
-          <div class="form-grid">
-            <label>
-              <span>Name</span>
-              <input id="name" type="text" placeholder="Production API" />
-            </label>
-            <label>
-              <span>Username</span>
-              <input id="username" type="text" placeholder="root" />
-            </label>
-            <label>
-              <span>Domain / IP</span>
-              <input id="host" type="text" placeholder="server.example.com" />
-            </label>
-            <label>
-              <span>Port</span>
-              <input id="port" type="number" value="22" />
-            </label>
-            <label>
-              <span>Authentication</span>
-              <select id="auth-kind">
-                <option value="agent">agent</option>
-                <option value="private_key">private_key</option>
-                <option value="password">password</option>
-              </select>
-            </label>
-            <label>
-              <span>Password / Key</span>
-              <input id="secret" type="password" placeholder="Not persisted yet" disabled />
-            </label>
-          </div>
+          <div class="machine-detail hidden" id="machine-detail">
+            <div class="machine-header">
+              <div>
+                <p class="eyebrow">Selected Machine</p>
+                <h3 id="detail-title">Machine</h3>
+                <p class="machine-meta" id="machine-meta">user@host:22</p>
+              </div>
+              <div class="machine-actions">
+                <button class="ghost-button" id="connect-profile">
+                  <span class="button-icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8 6v12l10-6z"></path>
+                    </svg>
+                  </span>
+                  Connect
+                </button>
+                <button class="danger-button" id="delete-profile">
+                  <span class="button-icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M9 3h6l1 2h4v2H4V5h4zm1 6h2v8h-2zm4 0h2v8h-2zM7 9h2v8H7z"></path>
+                    </svg>
+                  </span>
+                  Delete
+                </button>
+              </div>
+            </div>
 
-          <div class="info-grid">
-            <article class="info-card">
-              <span>Security</span>
-              <p id="security-copy">Agent mode is the safest default for the MVP.</p>
-            </article>
-            <article class="info-card">
-              <span>Storage</span>
-              <p id="data-dir">Loading...</p>
-            </article>
-            <article class="info-card">
-              <span>Auth Mix</span>
-              <p id="auth-mix">agent 0 | key 0 | password 0</p>
-            </article>
-          </div>
-
-          <div class="actions">
-            <button class="primary-button" id="save-profile">Save Profile</button>
-            <p class="status-text" id="status-text">Ready.</p>
+            <div class="detail-grid">
+              <article class="detail-card">
+                <span>Name</span>
+                <strong id="machine-name">-</strong>
+              </article>
+              <article class="detail-card">
+                <span>Username</span>
+                <strong id="machine-username">-</strong>
+              </article>
+              <article class="detail-card">
+                <span>Host</span>
+                <strong id="machine-host">-</strong>
+              </article>
+              <article class="detail-card">
+                <span>Port</span>
+                <strong id="machine-port">22</strong>
+              </article>
+              <article class="detail-card">
+                <span>Authentication</span>
+                <strong id="machine-auth">agent</strong>
+              </article>
+            </div>
           </div>
         </section>
+
+        <footer class="status-bar">
+          <p id="status-text">Ready.</p>
+        </footer>
       </main>
+    </div>
+
+    <div class="modal-backdrop hidden" id="modal-backdrop">
+      <section class="modal">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Add Machine</p>
+            <h3 id="modal-title">New SSH</h3>
+          </div>
+          <button class="icon-button" id="close-modal" aria-label="Close">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="m7 7 10 10M17 7 7 17"></path>
+            </svg>
+          </button>
+        </div>
+
+        <div class="modal-grid">
+          <label>
+            <span>Name</span>
+            <input id="name" type="text" placeholder="Production API" />
+          </label>
+          <label>
+            <span>Username</span>
+            <input id="username" type="text" placeholder="root" />
+          </label>
+          <label>
+            <span>Domain / IP</span>
+            <input id="host" type="text" placeholder="server.example.com" />
+          </label>
+          <label>
+            <span>Port</span>
+            <input id="port" type="number" value="22" />
+          </label>
+          <label>
+            <span>Authentication</span>
+            <select id="auth-kind">
+              <option value="agent">agent</option>
+              <option value="private_key">private_key</option>
+              <option value="password">password</option>
+            </select>
+          </label>
+          <label>
+            <span>Password / Key</span>
+            <input id="secret" type="password" placeholder="Not persisted yet" disabled />
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button class="ghost-button" id="cancel-modal">Cancel</button>
+          <button class="primary-button" id="save-profile">Save SSH</button>
+        </div>
+      </section>
     </div>
 
     <script src="./app.js"></script>
