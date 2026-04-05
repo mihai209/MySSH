@@ -14,9 +14,9 @@ import (
 )
 
 func startLocalShell() (string, *os.File, func() error, func(cols int, rows int) error, func() error, error) {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
+	shell, err := resolveLocalShell()
+	if err != nil {
+		return "", nil, nil, nil, nil, err
 	}
 
 	masterFD, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_CLOEXEC, 0)
@@ -55,7 +55,8 @@ func startLocalShell() (string, *os.File, func() error, func(cols int, rows int)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid:  true,
 		Setctty: true,
-		Ctty:    int(slave.Fd()),
+		// For exec.Cmd this is the child fd index, not the parent's raw fd number.
+		Ctty: 0,
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -85,4 +86,29 @@ func startLocalShell() (string, *os.File, func() error, func(cols int, rows int)
 	}
 
 	return shell, master, waitFn, resizeFn, closeFn, nil
+}
+
+func resolveLocalShell() (string, error) {
+	candidates := []string{}
+	if shell := os.Getenv("SHELL"); shell != "" {
+		candidates = append(candidates, shell)
+	}
+	candidates = append(candidates, "fish", "zsh", "bash", "sh")
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if filepath.IsAbs(candidate) {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+			continue
+		}
+		if resolved, err := exec.LookPath(candidate); err == nil {
+			return resolved, nil
+		}
+	}
+
+	return "", fmt.Errorf("no usable local shell found")
 }
