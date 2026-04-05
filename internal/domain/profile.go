@@ -16,9 +16,10 @@ const (
 type AuthKind string
 
 const (
-	AuthPassword   AuthKind = "password"
-	AuthPrivateKey AuthKind = "private_key"
-	AuthAgent      AuthKind = "agent"
+	AuthPassword         AuthKind = "password"
+	AuthPrivateKey       AuthKind = "private_key"
+	AuthAgent            AuthKind = "agent"
+	AuthAgentFallbackKey AuthKind = "agent_fallback_key"
 )
 
 type KeySource string
@@ -40,6 +41,8 @@ type Profile struct {
 	KeyPath          string    `json:"key_path,omitempty"`
 	SecretRef        string    `json:"secret_ref,omitempty"`
 	HasStoredSecret  bool      `json:"has_stored_secret,omitempty"`
+	PassphraseRef    string    `json:"passphrase_ref,omitempty"`
+	HasPassphrase    bool      `json:"has_passphrase,omitempty"`
 	ConnectSecretRef string    `json:"connect_secret_ref,omitempty"`
 	HasConnectSecret bool      `json:"has_connect_secret,omitempty"`
 }
@@ -80,16 +83,16 @@ func (p Profile) Validate() error {
 	case AuthPassword:
 		p.KeySource = KeySourceNone
 		p.KeyPath = ""
-	case AuthPrivateKey:
+	case AuthPrivateKey, AuthAgentFallbackKey:
 		switch p.KeySource {
 		case KeySourcePath:
 			if p.KeyPath == "" {
-				return errors.New("key path is required for private_key path mode")
+				return errors.New("key path is required for key path mode")
 			}
 		case KeySourceContent:
 			p.KeyPath = ""
 		default:
-			return errors.New("key source must be path or content for private_key auth")
+			return errors.New("key source must be path or content for key auth")
 		}
 	case AuthAgent:
 		p.KeySource = KeySourceNone

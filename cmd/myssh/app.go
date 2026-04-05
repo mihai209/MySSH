@@ -35,6 +35,7 @@ type ProfileDTO struct {
 	KeyPathExists    bool   `json:"keyPathExists"`
 	HasStoredSecret  bool   `json:"hasStoredSecret"`
 	SecretRef        string `json:"secretRef,omitempty"`
+	HasPassphrase    bool   `json:"hasPassphrase"`
 	HasConnectSecret bool   `json:"hasConnectSecret"`
 }
 
@@ -58,6 +59,7 @@ type SaveProfileInput struct {
 	KeySource          string `json:"keySource"`
 	KeyPath            string `json:"keyPath"`
 	SecretValue        string `json:"secretValue"`
+	PassphraseValue    string `json:"passphraseValue"`
 	ConnectSecretValue string `json:"connectSecretValue"`
 }
 
@@ -96,7 +98,7 @@ func (a *App) Dashboard() (DashboardDTO, error) {
 		switch profile.AuthKind {
 		case domain.AuthPassword:
 			dashboard.PasswordCount++
-		case domain.AuthPrivateKey:
+		case domain.AuthPrivateKey, domain.AuthAgentFallbackKey:
 			dashboard.KeyCount++
 		default:
 			dashboard.AgentCount++
@@ -126,6 +128,7 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 	profile.Normalize()
 
 	existingRef := ""
+	existingPassphraseRef := ""
 	existingConnectRef := ""
 	if strings.TrimSpace(input.ID) != "" {
 		profiles, err := a.service.ListProfiles()
@@ -137,6 +140,9 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 				existingRef = existing.SecretRef
 				profile.SecretRef = existing.SecretRef
 				profile.HasStoredSecret = existing.HasStoredSecret
+				existingPassphraseRef = existing.PassphraseRef
+				profile.PassphraseRef = existing.PassphraseRef
+				profile.HasPassphrase = existing.HasPassphrase
 				existingConnectRef = existing.ConnectSecretRef
 				profile.ConnectSecretRef = existing.ConnectSecretRef
 				profile.HasConnectSecret = existing.HasConnectSecret
@@ -146,7 +152,7 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 	}
 
 	secretValue := strings.TrimSpace(input.SecretValue)
-	if profile.AuthKind == domain.AuthPassword || (profile.AuthKind == domain.AuthPrivateKey && profile.KeySource == domain.KeySourceContent) {
+	if profile.AuthKind == domain.AuthPassword || ((profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourceContent) {
 		if secretValue == "" && existingRef == "" {
 			return ProfileDTO{}, fmt.Errorf("secret value is required for %s", profile.AuthKind)
 		}
@@ -167,6 +173,31 @@ func (a *App) SaveProfile(input SaveProfileInput) (ProfileDTO, error) {
 		}
 		profile.SecretRef = ""
 		profile.HasStoredSecret = false
+	}
+
+	passphraseValue := strings.TrimSpace(input.PassphraseValue)
+	switch {
+	case profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey:
+		if passphraseValue != "" {
+			if profile.PassphraseRef == "" {
+				profile.PassphraseRef = "profile:" + profile.ID + ":passphrase"
+			}
+			if err := a.secretStore.Set(profile.PassphraseRef, input.PassphraseValue); err != nil {
+				return ProfileDTO{}, fmt.Errorf("store key passphrase in keyring: %w", err)
+			}
+			profile.HasPassphrase = true
+		} else if existingPassphraseRef == "" {
+			profile.PassphraseRef = ""
+			profile.HasPassphrase = false
+		}
+	default:
+		if existingPassphraseRef != "" {
+			if err := a.secretStore.Delete(existingPassphraseRef); err != nil {
+				return ProfileDTO{}, fmt.Errorf("delete key passphrase from keyring: %w", err)
+			}
+		}
+		profile.PassphraseRef = ""
+		profile.HasPassphrase = false
 	}
 
 	connectSecretValue := strings.TrimSpace(input.ConnectSecretValue)
@@ -217,6 +248,11 @@ func (a *App) DeleteProfile(id string) error {
 				return fmt.Errorf("delete connect secret from keyring: %w", err)
 			}
 		}
+		if profile.PassphraseRef != "" {
+			if err := a.secretStore.Delete(profile.PassphraseRef); err != nil {
+				return fmt.Errorf("delete key passphrase from keyring: %w", err)
+			}
+		}
 		break
 	}
 
@@ -253,7 +289,7 @@ func (a *App) ConnectProfile(id string) error {
 	}
 
 	secretValue := ""
-	if profile.AuthKind == domain.AuthPassword || (profile.AuthKind == domain.AuthPrivateKey && profile.KeySource == domain.KeySourceContent) {
+	if profile.AuthKind == domain.AuthPassword || ((profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourceContent) {
 		if profile.SecretRef == "" {
 			if profile.AuthKind == domain.AuthPassword {
 				return fmt.Errorf("password profile has no stored secret")
@@ -269,6 +305,14 @@ func (a *App) ConnectProfile(id string) error {
 		}
 	}
 
+	passphraseValue := ""
+	if profile.PassphraseRef != "" {
+		passphraseValue, err = a.secretStore.Get(profile.PassphraseRef)
+		if err != nil {
+			return fmt.Errorf("load key passphrase from keyring: %w", err)
+		}
+	}
+
 	connectSecretValue := ""
 	if profile.ConnectSecretRef != "" {
 		connectSecretValue, err = a.secretStore.Get(profile.ConnectSecretRef)
@@ -277,7 +321,7 @@ func (a *App) ConnectProfile(id string) error {
 		}
 	}
 
-	err = a.sshManager.Connect(a.ctx, profile, secretValue, connectSecretValue)
+	err = a.sshManager.Connect(a.ctx, profile, secretValue, passphraseValue, connectSecretValue)
 	if err != nil {
 		var unknownHostErr *sshclient.UnknownHostError
 		if errors.As(err, &unknownHostErr) {
@@ -342,7 +386,7 @@ func (a *App) TrustPendingHost() error {
 
 func toProfileDTO(profile domain.Profile) ProfileDTO {
 	keyPathExists := false
-	if profile.AuthKind == domain.AuthPrivateKey && profile.KeySource == domain.KeySourcePath && profile.KeyPath != "" {
+	if (profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourcePath && profile.KeyPath != "" {
 		if _, err := os.Stat(profile.KeyPath); err == nil {
 			keyPathExists = true
 		}
@@ -360,6 +404,7 @@ func toProfileDTO(profile domain.Profile) ProfileDTO {
 		KeyPathExists:    keyPathExists,
 		HasStoredSecret:  profile.HasStoredSecret,
 		SecretRef:        profile.SecretRef,
+		HasPassphrase:    profile.HasPassphrase,
 		HasConnectSecret: profile.HasConnectSecret,
 	}
 }

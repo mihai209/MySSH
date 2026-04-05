@@ -67,10 +67,12 @@
     els.keyPath = document.getElementById("key-path");
     els.keyPathWrap = document.getElementById("key-path-wrap");
     els.secretWrap = document.getElementById("secret-wrap");
+    els.passphraseWrap = document.getElementById("passphrase-wrap");
     els.keyContentWrap = document.getElementById("key-content-wrap");
     els.keyContent = document.getElementById("key-content");
     els.modalSecurityCopy = document.getElementById("modal-security-copy");
     els.secret = document.getElementById("secret");
+    els.passphrase = document.getElementById("passphrase");
     els.terminalScreen = document.getElementById("terminal-screen");
     els.terminalTitle = document.getElementById("terminal-title");
     els.terminalSubtitle = document.getElementById("terminal-subtitle");
@@ -243,6 +245,7 @@
     els.keySource.value = "path";
     els.keyPath.value = "";
     els.secret.value = "";
+    els.passphrase.value = "";
     els.connectSecret.value = "";
     els.connectSecret.placeholder = "Optional remote SECRET stored in OS keyring";
     els.keyContent.value = "";
@@ -269,6 +272,10 @@
     els.keySource.value = profile.keySource || "path";
     els.keyPath.value = profile.keyPath || "";
     els.secret.value = "";
+    els.passphrase.value = "";
+    els.passphrase.placeholder = profile.hasPassphrase
+      ? "Stored in OS keyring"
+      : "Optional passphrase stored in OS keyring";
     els.connectSecret.value = "";
     els.connectSecret.placeholder = profile.hasConnectSecret
       ? "Stored in OS keyring"
@@ -291,9 +298,10 @@
         host: els.host.value,
         port: Number(els.port.value || 22),
         authKind: els.authKind.value,
-        keySource: els.authKind.value === "private_key" ? els.keySource.value : "",
-        keyPath: els.authKind.value === "private_key" && els.keySource.value === "path" ? els.keyPath.value : "",
+        keySource: usesKeyAuthentication() ? els.keySource.value : "",
+        keyPath: usesKeyAuthentication() && els.keySource.value === "path" ? els.keyPath.value : "",
         secretValue: resolveSecretValue(),
+        passphraseValue: resolvePassphraseValue(),
         connectSecretValue: els.connectSecret.value,
       };
 
@@ -361,6 +369,7 @@
     els.keySourceWrap.classList.add("hidden");
     els.keyPathWrap.classList.add("hidden");
     els.secretWrap.classList.add("hidden");
+    els.passphraseWrap.classList.add("hidden");
     els.keyContentWrap.classList.add("hidden");
 
     switch (els.authKind.value) {
@@ -370,15 +379,30 @@
         els.secret.placeholder = "Stored in OS keyring";
         els.secretWrap.classList.remove("hidden");
         break;
+      case "agent_fallback_key":
+        els.securityCopy.textContent = "Agent + fallback key tries ssh-agent first, then uses the configured key if needed. Key content and passphrase are persisted in your OS keyring.";
+        els.keySourceWrap.classList.remove("hidden");
+        els.passphraseWrap.classList.remove("hidden");
+        els.passphrase.placeholder = "Optional passphrase stored in OS keyring";
+        if (els.keySource.value === "content") {
+          els.keyContentWrap.classList.remove("hidden");
+          els.modalSecurityCopy.textContent = "Agent mode is tried first. If it fails, pasted key content and optional passphrase are loaded from your OS keyring.";
+        } else {
+          els.keyPathWrap.classList.remove("hidden");
+          els.modalSecurityCopy.textContent = "Agent mode is tried first. If it fails, the local key path and optional passphrase are used.";
+        }
+        break;
       case "private_key":
         els.securityCopy.textContent = "Private key mode supports either a key path reference or pasted key content persisted in your OS keyring.";
         els.keySourceWrap.classList.remove("hidden");
+        els.passphraseWrap.classList.remove("hidden");
+        els.passphrase.placeholder = "Optional passphrase stored in OS keyring";
         if (els.keySource.value === "content") {
           els.keyContentWrap.classList.remove("hidden");
-          els.modalSecurityCopy.textContent = "Pasted private key content is persisted in your OS keyring.";
+          els.modalSecurityCopy.textContent = "Pasted private key content and optional passphrase are persisted in your OS keyring.";
         } else {
           els.keyPathWrap.classList.remove("hidden");
-          els.modalSecurityCopy.textContent = "Key path mode stores only the filesystem path in the profile metadata.";
+          els.modalSecurityCopy.textContent = "Key path mode stores only the filesystem path in the profile metadata. Optional passphrase is persisted in your OS keyring.";
         }
         break;
       default:
@@ -389,7 +413,7 @@
   }
 
   function needsSecretValue() {
-    return els.authKind.value === "password" || (els.authKind.value === "private_key" && els.keySource.value === "content");
+    return els.authKind.value === "password" || (usesKeyAuthentication() && els.keySource.value === "content");
   }
 
   function resolveSecretValue() {
@@ -397,11 +421,22 @@
       return "";
     }
 
-    if (els.authKind.value === "private_key" && els.keySource.value === "content") {
+    if (usesKeyAuthentication() && els.keySource.value === "content") {
       return els.keyContent.value;
     }
 
     return els.secret.value;
+  }
+
+  function resolvePassphraseValue() {
+    if (!usesKeyAuthentication()) {
+      return "";
+    }
+    return els.passphrase.value;
+  }
+
+  function usesKeyAuthentication() {
+    return els.authKind.value === "private_key" || els.authKind.value === "agent_fallback_key";
   }
 
   function canConnectProfile(profile) {
@@ -411,7 +446,7 @@
     if (profile.authKind === "agent" || profile.authKind === "password") {
       return true;
     }
-    if (profile.authKind !== "private_key") {
+    if (profile.authKind !== "private_key" && profile.authKind !== "agent_fallback_key") {
       return false;
     }
     if (profile.keySource === "content") {
@@ -427,7 +462,7 @@
     if (!profile) {
       return "none";
     }
-    if (profile.authKind === "private_key" && profile.keySource === "path") {
+    if ((profile.authKind === "private_key" || profile.authKind === "agent_fallback_key") && profile.keySource === "path") {
       return profile.keyPathExists ? "key path found" : "key path missing";
     }
     if (profile.hasStoredSecret) {

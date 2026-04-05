@@ -229,6 +229,7 @@
             <span>Authentication</span>
             <select id="auth-kind">
               <option value="agent">agent</option>
+              <option value="agent_fallback_key">agent + fallback key</option>
               <option value="private_key">private_key</option>
               <option value="password">password</option>
             </select>
@@ -247,6 +248,10 @@
           <label class="hidden" id="secret-wrap">
             <span>Password</span>
             <input id="secret" type="password" placeholder="Stored in OS keyring" />
+          </label>
+          <label class="hidden" id="passphrase-wrap">
+            <span>Key Passphrase</span>
+            <input id="passphrase" type="password" placeholder="Optional passphrase stored in OS keyring" />
           </label>
           <label>
             <span>SECRET Token</span>

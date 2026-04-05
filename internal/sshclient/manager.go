@@ -40,6 +40,7 @@ type Manager struct {
 type connection struct {
 	profile        domain.Profile
 	secret         string
+	passphrase     string
 	connectSecret  string
 	client         *ssh.Client
 	session        *ssh.Session
@@ -52,12 +53,13 @@ func NewManager(emit EmitFunc) *Manager {
 	return &Manager{emit: emit}
 }
 
-func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret string, connectSecret string) error {
+func (m *Manager) Connect(ctx context.Context, profile domain.Profile, secret string, passphrase string, connectSecret string) error {
 	m.Disconnect()
 
 	conn := &connection{
 		profile:        profile,
 		secret:         secret,
+		passphrase:     passphrase,
 		connectSecret:  connectSecret,
 		reconnectDelay: 3 * time.Second,
 	}
@@ -129,7 +131,7 @@ func (m *Manager) Disconnect() {
 }
 
 func (m *Manager) establish(ctx context.Context, conn *connection, attempt int) error {
-	client, session, stdin, stdout, stderr, err := dial(conn.profile, conn.secret, conn.connectSecret)
+	client, session, stdin, stdout, stderr, err := dial(conn.profile, conn.secret, conn.passphrase, conn.connectSecret)
 	if err != nil {
 		return err
 	}
@@ -221,7 +223,7 @@ func (m *Manager) emitStatus(state string, profile domain.Profile, message strin
 	})
 }
 
-func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Client, *ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
+func dial(profile domain.Profile, secret string, passphrase string, connectSecret string) (*ssh.Client, *ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
 	hostKeyCallback, err := knownHostsCallback()
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
@@ -238,11 +240,19 @@ func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Cli
 	case domain.AuthPassword:
 		config.Auth = []ssh.AuthMethod{ssh.Password(secret)}
 	case domain.AuthPrivateKey:
-		auth, err := privateKeyAuthMethod(profile, secret)
+		auth, err := privateKeyAuthMethod(profile, secret, passphrase)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
 		config.Auth = []ssh.AuthMethod{auth}
+	case domain.AuthAgentFallbackKey:
+		authMethods, signerCount, usedFallback, err := agentFallbackAuthMethods(profile, secret, passphrase)
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		agentSignerCount = signerCount
+		config.Auth = authMethods
+		_ = usedFallback
 	case domain.AuthAgent:
 		auth, signerCount, err := agentAuthMethod()
 		if err != nil {
@@ -259,6 +269,9 @@ func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Cli
 	if err != nil {
 		if profile.AuthKind == domain.AuthAgent {
 			return nil, nil, nil, nil, nil, fmt.Errorf("ssh-agent auth failed (%d keys loaded). Make sure the correct key is loaded with ssh-add and that the server accepts it: %w", agentSignerCount, err)
+		}
+		if profile.AuthKind == domain.AuthAgentFallbackKey {
+			return nil, nil, nil, nil, nil, fmt.Errorf("agent + fallback key auth failed (%d agent keys tried): %w", agentSignerCount, err)
 		}
 		if profile.AuthKind == domain.AuthPrivateKey {
 			return nil, nil, nil, nil, nil, fmt.Errorf("private key auth failed: %w", err)
@@ -343,7 +356,7 @@ func agentAuthMethod() (ssh.AuthMethod, int, error) {
 	return ssh.PublicKeys(signers...), len(signers), nil
 }
 
-func privateKeyAuthMethod(profile domain.Profile, secret string) (ssh.AuthMethod, error) {
+func privateKeyAuthMethod(profile domain.Profile, secret string, passphrase string) (ssh.AuthMethod, error) {
 	var keyData []byte
 
 	switch profile.KeySource {
@@ -365,15 +378,49 @@ func privateKeyAuthMethod(profile domain.Profile, secret string) (ssh.AuthMethod
 		return nil, fmt.Errorf("private key auth requires key source path or content")
 	}
 
-	signer, err := ssh.ParsePrivateKey(keyData)
+	var (
+		signer ssh.Signer
+		err    error
+	)
+	if passphrase != "" {
+		signer, err = ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(passphrase))
+	} else {
+		signer, err = ssh.ParsePrivateKey(keyData)
+	}
 	if err != nil {
 		if _, ok := err.(*ssh.PassphraseMissingError); ok {
-			return nil, fmt.Errorf("encrypted private keys are not supported yet")
+			return nil, fmt.Errorf("private key requires a passphrase")
+		}
+		if passphrase != "" {
+			return nil, fmt.Errorf("parse private key with passphrase: %w", err)
 		}
 		return nil, fmt.Errorf("parse private key: %w", err)
 	}
 
 	return ssh.PublicKeys(signer), nil
+}
+
+func agentFallbackAuthMethods(profile domain.Profile, secret string, passphrase string) ([]ssh.AuthMethod, int, bool, error) {
+	authMethods := make([]ssh.AuthMethod, 0, 2)
+	usedFallback := false
+	signerCount := 0
+
+	if agentAuth, count, err := agentAuthMethod(); err == nil {
+		authMethods = append(authMethods, agentAuth)
+		signerCount = count
+	}
+
+	keyAuth, err := privateKeyAuthMethod(profile, secret, passphrase)
+	if err != nil {
+		if len(authMethods) > 0 {
+			return authMethods, signerCount, usedFallback, nil
+		}
+		return nil, signerCount, usedFallback, err
+	}
+	authMethods = append(authMethods, keyAuth)
+	usedFallback = true
+
+	return authMethods, signerCount, usedFallback, nil
 }
 
 func knownHostsCallback() (ssh.HostKeyCallback, error) {
