@@ -167,6 +167,80 @@ func (m *Manager) Download(sessionID string, remotePath string) (string, error) 
 	return targetPath, nil
 }
 
+func (m *Manager) Upload(sessionID string, localPath string, remoteDir string) (Directory, error) {
+	s, err := m.get(sessionID)
+	if err != nil {
+		return Directory{}, err
+	}
+
+	src, err := os.Open(localPath)
+	if err != nil {
+		return Directory{}, fmt.Errorf("open local file: %w", err)
+	}
+	defer src.Close()
+
+	resolvedDir, err := s.client.RealPath(remoteDir)
+	if err != nil || resolvedDir == "" {
+		resolvedDir = remoteDir
+	}
+
+	remotePath := filepath.ToSlash(filepath.Join(resolvedDir, filepath.Base(localPath)))
+	dst, err := s.client.OpenFile(remotePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		return Directory{}, fmt.Errorf("create remote file: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return Directory{}, fmt.Errorf("upload file: %w", err)
+	}
+
+	return m.List(sessionID, resolvedDir)
+}
+
+func (m *Manager) Rename(sessionID string, oldPath string, newPath string) (Directory, error) {
+	s, err := m.get(sessionID)
+	if err != nil {
+		return Directory{}, err
+	}
+
+	if err := s.client.Rename(oldPath, newPath); err != nil {
+		return Directory{}, fmt.Errorf("rename remote path: %w", err)
+	}
+	return m.List(sessionID, filepath.Dir(newPath))
+}
+
+func (m *Manager) Delete(sessionID string, remotePath string, isDir bool) (Directory, error) {
+	s, err := m.get(sessionID)
+	if err != nil {
+		return Directory{}, err
+	}
+
+	if isDir {
+		if err := s.client.RemoveDirectory(remotePath); err != nil {
+			return Directory{}, fmt.Errorf("delete remote directory: %w", err)
+		}
+	} else {
+		if err := s.client.Remove(remotePath); err != nil {
+			return Directory{}, fmt.Errorf("delete remote file: %w", err)
+		}
+	}
+	return m.List(sessionID, filepath.Dir(remotePath))
+}
+
+func (m *Manager) Mkdir(sessionID string, parentDir string, name string) (Directory, error) {
+	s, err := m.get(sessionID)
+	if err != nil {
+		return Directory{}, err
+	}
+
+	targetPath := filepath.ToSlash(filepath.Join(parentDir, name))
+	if err := s.client.Mkdir(targetPath); err != nil {
+		return Directory{}, fmt.Errorf("create remote directory: %w", err)
+	}
+	return m.List(sessionID, parentDir)
+}
+
 func (m *Manager) Close(sessionID string) error {
 	m.mu.Lock()
 	s := m.sessions[sessionID]

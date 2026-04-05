@@ -373,6 +373,79 @@ func (a *App) DownloadSFTPFile(sessionID string, remotePath string) (string, err
 	return a.sftpManager.Download(strings.TrimSpace(sessionID), strings.TrimSpace(remotePath))
 }
 
+func (a *App) UploadSFTPFile(sessionID string) (SFTPDirectoryDTO, error) {
+	if a.ctx == nil {
+		return SFTPDirectoryDTO{}, fmt.Errorf("ui context not ready")
+	}
+	filePath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Upload File to SFTP",
+	})
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return SFTPDirectoryDTO{}, fmt.Errorf("no local file selected")
+	}
+
+	dir, err := a.sftpManager.Upload(strings.TrimSpace(sessionID), filePath, ".")
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) UploadSFTPFileToPath(sessionID string, remoteDir string) (SFTPDirectoryDTO, error) {
+	if a.ctx == nil {
+		return SFTPDirectoryDTO{}, fmt.Errorf("ui context not ready")
+	}
+	filePath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Upload File to SFTP",
+	})
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return SFTPDirectoryDTO{}, fmt.Errorf("no local file selected")
+	}
+
+	dir, err := a.sftpManager.Upload(strings.TrimSpace(sessionID), filePath, strings.TrimSpace(remoteDir))
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) RenameSFTPPath(sessionID string, oldPath string, newName string) (SFTPDirectoryDTO, error) {
+	oldPath = strings.TrimSpace(oldPath)
+	newName = strings.TrimSpace(newName)
+	if oldPath == "" || newName == "" {
+		return SFTPDirectoryDTO{}, fmt.Errorf("old path and new name are required")
+	}
+
+	newPath := filepath.Join(filepath.Dir(oldPath), newName)
+	dir, err := a.sftpManager.Rename(strings.TrimSpace(sessionID), oldPath, newPath)
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) DeleteSFTPPath(sessionID string, remotePath string, isDir bool) (SFTPDirectoryDTO, error) {
+	dir, err := a.sftpManager.Delete(strings.TrimSpace(sessionID), strings.TrimSpace(remotePath), isDir)
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) MkdirSFTP(sessionID string, parentDir string, name string) (SFTPDirectoryDTO, error) {
+	dir, err := a.sftpManager.Mkdir(strings.TrimSpace(sessionID), strings.TrimSpace(parentDir), strings.TrimSpace(name))
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
 func (a *App) CloseSFTP(sessionID string) error {
 	return a.sftpManager.Close(strings.TrimSpace(sessionID))
 }

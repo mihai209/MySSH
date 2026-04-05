@@ -90,6 +90,7 @@
     els.terminalTitle = document.getElementById("terminal-title");
     els.terminalSubtitle = document.getElementById("terminal-subtitle");
     els.terminalStatusChip = document.getElementById("terminal-status-chip");
+    els.terminalSFTPToggle = document.getElementById("terminal-sftp-toggle");
     els.terminalRename = document.getElementById("terminal-rename");
     els.terminalReconnect = document.getElementById("terminal-reconnect");
     els.terminalClose = document.getElementById("terminal-close");
@@ -114,9 +115,11 @@
     els.sftpList = document.getElementById("sftp-list");
     els.sftpRefresh = document.getElementById("sftp-refresh");
     els.sftpUp = document.getElementById("sftp-up");
+    els.sftpUpload = document.getElementById("sftp-upload");
+    els.sftpMkdir = document.getElementById("sftp-mkdir");
     els.sftpClose = document.getElementById("sftp-close");
-    els.sftpBack = document.getElementById("sftp-back");
     els.toastStack = document.getElementById("toast-stack");
+    els.workspaceBody = document.querySelector(".workspace-body");
     els.connectSecret = document.getElementById("connect-secret");
   }
 
@@ -135,6 +138,7 @@
     els.authKind.addEventListener("change", updateSecurityCopy);
     els.keySource.addEventListener("change", updateSecurityCopy);
     els.terminalBack.addEventListener("click", closeTerminal);
+    els.terminalSFTPToggle.addEventListener("click", toggleSFTP);
     els.terminalRename.addEventListener("click", renameActiveSession);
     els.terminalReconnect.addEventListener("click", reconnectActiveSession);
     els.terminalClose.addEventListener("click", closeActiveSession);
@@ -144,8 +148,9 @@
     els.terminalPaste.addEventListener("click", pasteIntoTerminal);
     els.sftpRefresh.addEventListener("click", refreshSFTP);
     els.sftpUp.addEventListener("click", goUpSFTP);
+    els.sftpUpload.addEventListener("click", uploadToSFTP);
+    els.sftpMkdir.addEventListener("click", mkdirInSFTP);
     els.sftpClose.addEventListener("click", closeSFTP);
-    els.sftpBack.addEventListener("click", hideSFTP);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -391,33 +396,9 @@
       return;
     }
 
-    const tab = openSessionTab({
-      title: profile.name || "SSH Session",
-      subtitle: formatSessionTarget(profile),
-      connectTarget: profile,
-      profileId: profile.id,
-      kind: "ssh",
-      loaderVisible: true,
-      loaderText: `Connecting to ${profile.host}...`,
-      status: "Connecting",
-      pendingHostKeyId: profile.id,
-    });
-    appendTerminalOutputToTab(tab.id, `[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\r\n`);
-
     try {
-      const backendSessionId = await window.go.main.App.ConnectProfile(profile.id);
-      attachBackendSessionToTab(tab.id, backendSessionId);
-      updateSession(tab.id, {
-        status: "Connected",
-        loaderVisible: false,
-        loaderText: "",
-      });
+      await ensureSSHSessionForProfile(profile);
     } catch (error) {
-      updateSession(tab.id, {
-        loaderVisible: false,
-        status: "Error",
-      });
-      appendTerminalOutputToTab(tab.id, `[MySSH] Connection error: ${String(error)}\r\n`);
       setStatus(String(error), true);
     }
   }
@@ -455,6 +436,13 @@
     const profile = state.profiles.find((item) => item.id === state.selectedId);
     if (!profile || !canOpenSFTP(profile)) {
       showToast("SFTP needs a valid SSH profile with working authentication.", true);
+      return;
+    }
+
+    try {
+      await ensureSSHSessionForProfile(profile);
+    } catch (error) {
+      showToast(`SFTP needs a live SSH session: ${String(error)}`, true);
       return;
     }
 
@@ -527,6 +515,78 @@
     try {
       const localPath = await window.go.main.App.DownloadSFTPFile(state.sftp.sessionId, path);
       showToast(`Downloaded to ${localPath}`);
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function uploadToSFTP() {
+    if (!state.sftp.sessionId || !state.sftp.path) {
+      return;
+    }
+    setSFTPLoader(true, `Uploading into ${state.sftp.path}...`);
+    try {
+      const directory = await window.go.main.App.UploadSFTPFileToPath(state.sftp.sessionId, state.sftp.path);
+      updateSFTPDirectory(directory);
+      showToast("Upload completed.");
+    } catch (error) {
+      if (!String(error).includes("no local file selected")) {
+        showToast(String(error), true);
+      }
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function mkdirInSFTP() {
+    if (!state.sftp.sessionId || !state.sftp.path) {
+      return;
+    }
+    const name = window.prompt("New folder name");
+    if (!name) {
+      return;
+    }
+    setSFTPLoader(true, `Creating ${name}...`);
+    try {
+      const directory = await window.go.main.App.MkdirSFTP(state.sftp.sessionId, state.sftp.path, name);
+      updateSFTPDirectory(directory);
+      showToast("Folder created.");
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function renameSFTPEntry(entry) {
+    const nextName = window.prompt("Rename to", entry.name);
+    if (!nextName || nextName === entry.name) {
+      return;
+    }
+    setSFTPLoader(true, `Renaming ${entry.name}...`);
+    try {
+      const directory = await window.go.main.App.RenameSFTPPath(state.sftp.sessionId, entry.path, nextName);
+      updateSFTPDirectory(directory);
+      showToast("Remote path renamed.");
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function deleteSFTPEntry(entry) {
+    const confirmed = window.confirm(`Delete ${entry.isDir ? "folder" : "file"} "${entry.name}"?`);
+    if (!confirmed) {
+      return;
+    }
+    setSFTPLoader(true, `Deleting ${entry.name}...`);
+    try {
+      const directory = await window.go.main.App.DeleteSFTPPath(state.sftp.sessionId, entry.path, entry.isDir);
+      updateSFTPDirectory(directory);
+      showToast("Remote path deleted.");
     } catch (error) {
       showToast(String(error), true);
     } finally {
@@ -674,9 +734,12 @@
 
   function syncSFTPView() {
     els.sftpScreen.classList.toggle("hidden", !state.sftp.visible);
+    els.workspaceBody.classList.toggle("split", state.sftp.visible);
     if (!state.sftp.visible) {
+      els.terminalSFTPToggle.textContent = "SFTP";
       return;
     }
+    els.terminalSFTPToggle.textContent = "Hide SFTP";
     els.sftpTitle.textContent = `${state.sftp.profileName} SFTP`;
     els.sftpSubtitle.textContent = state.sftp.profileName || "SFTP Browser";
     els.sftpPath.textContent = state.sftp.path || "Waiting for path...";
@@ -719,7 +782,11 @@
           <div class="sftp-entry-meta">${escapeHtml(entry.mode)} • ${entry.isDir ? "directory" : `${entry.size} bytes`}</div>
         </div>
         <div class="sftp-entry-meta">${escapeHtml(formatTimestamp(entry.modified))}</div>
-        <button class="ghost-button" data-sftp-open="${escapeHtml(entry.path)}">${entry.isDir ? "Open" : "Download"}</button>
+        <div class="sftp-entry-actions">
+          <button class="ghost-button" data-sftp-open="${escapeHtml(entry.path)}">${entry.isDir ? "Open" : "Download"}</button>
+          <button class="ghost-button" data-sftp-rename="${escapeHtml(entry.path)}">Rename</button>
+          <button class="danger-button" data-sftp-delete="${escapeHtml(entry.path)}">Delete</button>
+        </div>
       `;
       row.querySelector("[data-sftp-open]").addEventListener("click", () => {
         if (entry.isDir) {
@@ -728,6 +795,8 @@
         }
         downloadSFTPFile(entry.path);
       });
+      row.querySelector("[data-sftp-rename]").addEventListener("click", () => renameSFTPEntry(entry));
+      row.querySelector("[data-sftp-delete]").addEventListener("click", () => deleteSFTPEntry(entry));
       els.sftpList.appendChild(row);
     });
   }
@@ -751,10 +820,27 @@
     showToast("SFTP session closed.");
   }
 
-  function hideSFTP() {
+  function toggleSFTP() {
+    const session = activeSession();
+    if (!session || session.kind !== "ssh" || !session.profileId) {
+      showToast("SFTP is available only for SSH sessions.", true);
+      return;
+    }
+    if (!state.sftp.visible) {
+      const profile = state.profiles.find((item) => item.id === session.profileId);
+      if (!profile) {
+        showToast("Profile no longer exists for this session.", true);
+        return;
+      }
+      state.selectedId = profile.id || state.selectedId;
+      renderProfiles();
+      renderSelection();
+      openSFTP();
+      return;
+    }
     state.sftp.visible = false;
     syncSFTPView();
-    showToast("SFTP browser hidden. Session stays open until Close.");
+    showToast("SFTP panel hidden. Session stays open until Close.");
   }
 
   function openSessionTab(session) {
@@ -817,6 +903,7 @@
     const session = activeSession();
     if (!session) {
       els.terminalScreen.classList.add("hidden");
+      els.terminalSFTPToggle.disabled = true;
       return;
     }
 
@@ -827,6 +914,11 @@
     setTerminalLoader(Boolean(session.loaderVisible), session.loaderText || "");
     els.terminalTrust.classList.toggle("hidden", !session.trustVisible);
     els.terminalTrustCopy.textContent = session.trustText || "";
+    els.terminalSFTPToggle.disabled = session.kind !== "ssh" || !session.profileId;
+    if (state.sftp.visible && (session.kind !== "ssh" || state.sftp.profileId !== session.profileId)) {
+      state.sftp.visible = false;
+      syncSFTPView();
+    }
 
     destroyTerminal();
     ensureTerminal();
@@ -839,22 +931,41 @@
   function renderSessionTabs() {
     els.terminalTabs.innerHTML = "";
     state.sessions.forEach((session) => {
-      const button = document.createElement("button");
-      button.type = "button";
+      const button = document.createElement("div");
       button.className = "terminal-tab";
+      button.setAttribute("role", "button");
+      button.setAttribute("tabindex", "0");
       if (session.id === state.activeSessionId) {
         button.classList.add("active");
       }
-      button.innerHTML = `
-        <span class="terminal-tab-label">${escapeHtml(session.title)}</span>
-        <button class="terminal-tab-close" data-session-close="${escapeHtml(session.id)}">x</button>
-      `;
+      const label = document.createElement("span");
+      label.className = "terminal-tab-label";
+      label.textContent = session.title;
+      const closeButton = document.createElement("span");
+      closeButton.className = "terminal-tab-close";
+      closeButton.setAttribute("data-session-close", session.id);
+      closeButton.setAttribute("role", "button");
+      closeButton.setAttribute("tabindex", "0");
+      closeButton.textContent = "x";
+      button.appendChild(label);
+      button.appendChild(closeButton);
       button.addEventListener("click", () => activateSession(session.id));
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          activateSession(session.id);
+        }
+      });
       els.terminalTabs.appendChild(button);
     });
     els.terminalReconnect.disabled = !activeSession();
     els.terminalRename.disabled = !activeSession();
     els.terminalClose.disabled = !activeSession();
+    els.terminalCopy.disabled = !activeSession();
+    els.terminalPaste.disabled = !activeSession();
+    els.terminalGpuToggle.disabled = !activeSession();
+    els.terminalSFTPToggle.disabled = !activeSession() || activeSession()?.kind !== "ssh";
+    els.terminalReconnect.textContent = activeSession()?.kind === "local" ? "Reopen" : "Reconnect";
     Array.from(els.terminalTabs.querySelectorAll("[data-session-close]")).forEach((closeButton) => {
       closeButton.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -882,6 +993,21 @@
     const session = findSession(sessionId);
     if (!session) {
       return;
+    }
+    if (state.sftp.sessionId && state.sftp.profileId && session.profileId === state.sftp.profileId) {
+      try {
+        await window.go.main.App.CloseSFTP(state.sftp.sessionId);
+      } catch (_) {}
+      state.sftp = {
+        visible: false,
+        sessionId: "",
+        profileId: "",
+        profileName: "",
+        path: "",
+        parent: "",
+        entries: [],
+      };
+      syncSFTPView();
     }
     if (session.backendSessionId) {
       try {
@@ -915,17 +1041,29 @@
     }
     session.buffer = "";
     session.loaderVisible = true;
-    session.status = "Connecting";
+    session.status = session.kind === "local" ? "Opening" : "Connecting";
     session.trustVisible = false;
     syncActiveSessionView();
     if (session.kind === "local") {
       const backendSessionId = await window.go.main.App.ConnectLocalShell();
       attachBackendSessionToTab(session.id, backendSessionId);
+      updateSession(session.id, {
+        status: "Local",
+        loaderVisible: false,
+        loaderText: "",
+      });
+      showToast("Local terminal reopened.");
       return;
     }
     if (session.profileId) {
       const backendSessionId = await window.go.main.App.ConnectProfile(session.profileId);
       attachBackendSessionToTab(session.id, backendSessionId);
+      updateSession(session.id, {
+        status: "Connected",
+        loaderVisible: false,
+        loaderText: "",
+      });
+      showToast("SSH session reconnected.");
     }
   }
 
@@ -945,6 +1083,59 @@
 
   function activeSession() {
     return state.sessions.find((item) => item.id === state.activeSessionId) || null;
+  }
+
+  function findSessionByProfile(profileId) {
+    return state.sessions.find((item) => item.kind === "ssh" && item.profileId === profileId) || null;
+  }
+
+  async function ensureSSHSessionForProfile(profile) {
+    const existing = findSessionByProfile(profile.id);
+    if (existing) {
+      activateSession(existing.id);
+      if (existing.backendSessionId) {
+        return existing;
+      }
+    }
+
+    const tab = existing || openSessionTab({
+      title: profile.name || "SSH Session",
+      subtitle: formatSessionTarget(profile),
+      connectTarget: profile,
+      profileId: profile.id,
+      kind: "ssh",
+      loaderVisible: true,
+      loaderText: `Connecting to ${profile.host}...`,
+      status: "Connecting",
+      pendingHostKeyId: profile.id,
+    });
+    if (!existing) {
+      appendTerminalOutputToTab(tab.id, `[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\r\n`);
+    } else {
+      updateSession(tab.id, {
+        loaderVisible: true,
+        loaderText: `Connecting to ${profile.host}...`,
+        status: "Connecting",
+      });
+    }
+
+    try {
+      const backendSessionId = await window.go.main.App.ConnectProfile(profile.id);
+      attachBackendSessionToTab(tab.id, backendSessionId);
+      updateSession(tab.id, {
+        status: "Connected",
+        loaderVisible: false,
+        loaderText: "",
+      });
+      return tab;
+    } catch (error) {
+      updateSession(tab.id, {
+        loaderVisible: false,
+        status: "Error",
+      });
+      appendTerminalOutputToTab(tab.id, `[MySSH] Connection error: ${String(error)}\r\n`);
+      throw error;
+    }
   }
 
   function findSession(sessionId) {

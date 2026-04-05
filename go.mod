@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/99designs/keyring v1.2.2
+	github.com/creack/pty v1.1.24
 	github.com/pkg/sftp v1.13.10
 	github.com/wailsapp/wails/v2 v2.9.2
 	golang.org/x/crypto v0.49.0

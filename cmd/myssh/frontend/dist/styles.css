@@ -419,6 +419,43 @@ button:disabled {
   gap: 18px;
 }
 
+.workspace-body {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.workspace-body.split {
+  grid-template-columns: minmax(0, 1fr) 420px;
+}
+
+.terminal-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.sftp-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(12, 22, 34, 0.94);
+  border: 1px solid rgba(79, 179, 255, 0.12);
+}
+
+.sftp-pane-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
 .terminal-topbar {
   display: flex;
   justify-content: space-between;
@@ -561,7 +598,7 @@ button:disabled {
 
 .sftp-entry {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 14px;
   align-items: center;
   padding: 14px 16px;
@@ -581,6 +618,13 @@ button:disabled {
 .sftp-entry-meta {
   color: var(--muted);
   font-size: 13px;
+}
+
+.sftp-entry-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .sftp-entry-dir .sftp-entry-name {
@@ -606,6 +650,12 @@ button:disabled {
   border: 1px solid rgba(79, 179, 255, 0.2);
   color: var(--text);
   box-shadow: var(--shadow);
+}
+
+@media (max-width: 1280px) {
+  .workspace-body.split {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .toast.error {

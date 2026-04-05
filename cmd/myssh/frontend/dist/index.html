@@ -187,6 +187,7 @@
         </div>
         <div class="terminal-topbar-actions">
           <span class="status-chip" id="terminal-status-chip">Idle</span>
+          <button class="ghost-button" id="terminal-sftp-toggle">SFTP</button>
           <button class="ghost-button" id="terminal-rename">Rename</button>
           <button class="ghost-button" id="terminal-reconnect">Reconnect</button>
           <button class="ghost-button" id="terminal-close">Close</button>
@@ -212,38 +213,42 @@
         <button class="primary-button" id="terminal-trust-button">Trust and Connect</button>
       </div>
 
-      <div class="terminal-output" id="terminal-container"></div>
-    </section>
-
-    <section class="terminal-screen hidden" id="sftp-screen">
-      <header class="terminal-topbar">
-        <div>
-          <p class="eyebrow">SFTP</p>
-          <h2 id="sftp-title">SFTP Browser</h2>
-          <p class="terminal-subtitle" id="sftp-subtitle">Waiting for session...</p>
+      <div class="workspace-body">
+        <div class="terminal-pane">
+          <div class="terminal-output" id="terminal-container"></div>
         </div>
-        <div class="terminal-topbar-actions">
-          <span class="status-chip" id="sftp-status-chip">Idle</span>
-          <button class="ghost-button" id="sftp-refresh">Refresh</button>
-          <button class="ghost-button" id="sftp-up">Up</button>
-          <button class="ghost-button" id="sftp-close">Close</button>
-          <button class="ghost-button" id="sftp-back">Back</button>
-        </div>
-      </header>
+        <aside class="sftp-pane hidden" id="sftp-screen">
+          <header class="sftp-pane-header">
+            <div>
+              <p class="eyebrow">SFTP</p>
+              <h3 id="sftp-title">SFTP Browser</h3>
+              <p class="terminal-subtitle" id="sftp-subtitle">Waiting for session...</p>
+            </div>
+            <div class="terminal-topbar-actions">
+              <span class="status-chip" id="sftp-status-chip">Idle</span>
+              <button class="ghost-button" id="sftp-upload">Upload</button>
+              <button class="ghost-button" id="sftp-refresh">Refresh</button>
+              <button class="ghost-button" id="sftp-up">Up</button>
+              <button class="ghost-button" id="sftp-mkdir">New Folder</button>
+              <button class="ghost-button" id="sftp-close">Close</button>
+            </div>
+          </header>
 
-      <div class="terminal-loader hidden" id="sftp-loader">
-        <div class="loader-spinner"></div>
-        <p id="sftp-loader-text">Loading files...</p>
+          <div class="terminal-loader hidden" id="sftp-loader">
+            <div class="loader-spinner"></div>
+            <p id="sftp-loader-text">Loading files...</p>
+          </div>
+
+          <div class="sftp-toolbar">
+            <div class="info-card sftp-path-card">
+              <span>Path</span>
+              <p id="sftp-path">/</p>
+            </div>
+          </div>
+
+          <div class="sftp-list" id="sftp-list"></div>
+        </aside>
       </div>
-
-      <div class="sftp-toolbar">
-        <div class="info-card sftp-path-card">
-          <span>Path</span>
-          <p id="sftp-path">/</p>
-        </div>
-      </div>
-
-      <div class="sftp-list" id="sftp-list"></div>
     </section>
 
     <div class="modal-backdrop hidden" id="modal-backdrop">
