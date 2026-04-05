@@ -103,6 +103,12 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+func (a *App) emitTransfer(payload map[string]interface{}) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "sftp:transfer", payload)
+	}
+}
+
 func (a *App) Dashboard() (DashboardDTO, error) {
 	profiles, err := a.service.ListProfiles()
 	if err != nil {
@@ -371,7 +377,49 @@ func (a *App) ListSFTP(sessionID string, path string) (SFTPDirectoryDTO, error) 
 }
 
 func (a *App) DownloadSFTPFile(sessionID string, remotePath string) (string, error) {
-	return a.sftpManager.Download(strings.TrimSpace(sessionID), strings.TrimSpace(remotePath))
+	sessionID = strings.TrimSpace(sessionID)
+	remotePath = strings.TrimSpace(remotePath)
+	transferID := domain.NewID()
+	a.emitTransfer(map[string]interface{}{
+		"id":     transferID,
+		"type":   "download",
+		"name":   filepath.Base(remotePath),
+		"path":   remotePath,
+		"state":  "starting",
+		"done":   int64(0),
+		"total":  int64(0),
+	})
+	localPath, err := a.sftpManager.DownloadWithProgress(sessionID, remotePath, func(done int64, total int64) {
+		a.emitTransfer(map[string]interface{}{
+			"id":    transferID,
+			"type":  "download",
+			"name":  filepath.Base(remotePath),
+			"path":  remotePath,
+			"state": "running",
+			"done":  done,
+			"total": total,
+		})
+	})
+	if err != nil {
+		a.emitTransfer(map[string]interface{}{
+			"id":      transferID,
+			"type":    "download",
+			"name":    filepath.Base(remotePath),
+			"path":    remotePath,
+			"state":   "error",
+			"message": err.Error(),
+		})
+		return "", err
+	}
+	a.emitTransfer(map[string]interface{}{
+		"id":        transferID,
+		"type":      "download",
+		"name":      filepath.Base(remotePath),
+		"path":      remotePath,
+		"state":     "completed",
+		"localPath": localPath,
+	})
+	return localPath, nil
 }
 
 func (a *App) UploadSFTPFile(sessionID string) (SFTPDirectoryDTO, error) {
@@ -388,10 +436,44 @@ func (a *App) UploadSFTPFile(sessionID string) (SFTPDirectoryDTO, error) {
 		return SFTPDirectoryDTO{}, fmt.Errorf("no local file selected")
 	}
 
-	dir, err := a.sftpManager.Upload(strings.TrimSpace(sessionID), filePath, ".")
+	transferID := domain.NewID()
+	name := filepath.Base(filePath)
+	a.emitTransfer(map[string]interface{}{
+		"id":    transferID,
+		"type":  "upload",
+		"name":  name,
+		"path":  filePath,
+		"state": "starting",
+	})
+	dir, err := a.sftpManager.UploadWithProgress(strings.TrimSpace(sessionID), filePath, ".", func(done int64, total int64) {
+		a.emitTransfer(map[string]interface{}{
+			"id":    transferID,
+			"type":  "upload",
+			"name":  name,
+			"path":  filePath,
+			"state": "running",
+			"done":  done,
+			"total": total,
+		})
+	})
 	if err != nil {
+		a.emitTransfer(map[string]interface{}{
+			"id":      transferID,
+			"type":    "upload",
+			"name":    name,
+			"path":    filePath,
+			"state":   "error",
+			"message": err.Error(),
+		})
 		return SFTPDirectoryDTO{}, err
 	}
+	a.emitTransfer(map[string]interface{}{
+		"id":    transferID,
+		"type":  "upload",
+		"name":  name,
+		"path":  filePath,
+		"state": "completed",
+	})
 	return toSFTPDirectoryDTO(dir), nil
 }
 
@@ -409,10 +491,44 @@ func (a *App) UploadSFTPFileToPath(sessionID string, remoteDir string) (SFTPDire
 		return SFTPDirectoryDTO{}, fmt.Errorf("no local file selected")
 	}
 
-	dir, err := a.sftpManager.Upload(strings.TrimSpace(sessionID), filePath, strings.TrimSpace(remoteDir))
+	transferID := domain.NewID()
+	name := filepath.Base(filePath)
+	a.emitTransfer(map[string]interface{}{
+		"id":    transferID,
+		"type":  "upload",
+		"name":  name,
+		"path":  filePath,
+		"state": "starting",
+	})
+	dir, err := a.sftpManager.UploadWithProgress(strings.TrimSpace(sessionID), filePath, strings.TrimSpace(remoteDir), func(done int64, total int64) {
+		a.emitTransfer(map[string]interface{}{
+			"id":    transferID,
+			"type":  "upload",
+			"name":  name,
+			"path":  filePath,
+			"state": "running",
+			"done":  done,
+			"total": total,
+		})
+	})
 	if err != nil {
+		a.emitTransfer(map[string]interface{}{
+			"id":      transferID,
+			"type":    "upload",
+			"name":    name,
+			"path":    filePath,
+			"state":   "error",
+			"message": err.Error(),
+		})
 		return SFTPDirectoryDTO{}, err
 	}
+	a.emitTransfer(map[string]interface{}{
+		"id":    transferID,
+		"type":  "upload",
+		"name":  name,
+		"path":  filePath,
+		"state": "completed",
+	})
 	return toSFTPDirectoryDTO(dir), nil
 }
 
@@ -427,10 +543,43 @@ func (a *App) UploadSFTPContent(sessionID string, remoteDir string, fileName str
 		return SFTPDirectoryDTO{}, fmt.Errorf("decode upload content: %w", err)
 	}
 
-	dir, err := a.sftpManager.UploadContent(strings.TrimSpace(sessionID), fileName, content, strings.TrimSpace(remoteDir))
+	transferID := domain.NewID()
+	a.emitTransfer(map[string]interface{}{
+		"id":    transferID,
+		"type":  "upload",
+		"name":  fileName,
+		"path":  fileName,
+		"state": "starting",
+	})
+	dir, err := a.sftpManager.UploadContentWithProgress(strings.TrimSpace(sessionID), fileName, content, strings.TrimSpace(remoteDir), func(done int64, total int64) {
+		a.emitTransfer(map[string]interface{}{
+			"id":    transferID,
+			"type":  "upload",
+			"name":  fileName,
+			"path":  fileName,
+			"state": "running",
+			"done":  done,
+			"total": total,
+		})
+	})
 	if err != nil {
+		a.emitTransfer(map[string]interface{}{
+			"id":      transferID,
+			"type":    "upload",
+			"name":    fileName,
+			"path":    fileName,
+			"state":   "error",
+			"message": err.Error(),
+		})
 		return SFTPDirectoryDTO{}, err
 	}
+	a.emitTransfer(map[string]interface{}{
+		"id":    transferID,
+		"type":  "upload",
+		"name":  fileName,
+		"path":  fileName,
+		"state": "completed",
+	})
 	return toSFTPDirectoryDTO(dir), nil
 }
 

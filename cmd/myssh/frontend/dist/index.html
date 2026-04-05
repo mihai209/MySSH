@@ -376,6 +376,18 @@
       </section>
     </div>
 
+    <div class="sftp-context-menu hidden" id="sftp-context-menu"></div>
+    <section class="transfer-queue hidden" id="transfer-queue">
+      <header class="transfer-queue-header">
+        <div>
+          <p class="eyebrow">Transfers</p>
+          <strong id="transfer-queue-title">Queue idle</strong>
+        </div>
+        <button class="ghost-button" id="transfer-queue-close">Hide</button>
+      </header>
+      <div class="transfer-queue-list" id="transfer-queue-list"></div>
+    </section>
+
     <div class="toast-stack" id="toast-stack"></div>
 
     <script src="./vendor/xterm.js"></script>

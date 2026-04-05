@@ -42,6 +42,8 @@ type Manager struct {
 	sessions map[string]*session
 }
 
+type ProgressFunc func(done int64, total int64)
+
 func NewManager() *Manager {
 	return &Manager{sessions: map[string]*session{}}
 }
@@ -130,10 +132,20 @@ func (m *Manager) List(sessionID string, path string) (Directory, error) {
 }
 
 func (m *Manager) Download(sessionID string, remotePath string) (string, error) {
+	return m.DownloadWithProgress(sessionID, remotePath, nil)
+}
+
+func (m *Manager) DownloadWithProgress(sessionID string, remotePath string, progress ProgressFunc) (string, error) {
 	s, err := m.get(sessionID)
 	if err != nil {
 		return "", err
 	}
+
+	info, err := s.client.Stat(remotePath)
+	if err != nil {
+		return "", fmt.Errorf("stat remote file: %w", err)
+	}
+	total := info.Size()
 
 	src, err := s.client.Open(remotePath)
 	if err != nil {
@@ -161,7 +173,7 @@ func (m *Manager) Download(sessionID string, remotePath string) (string, error) 
 	}
 	defer dst.Close()
 
-	if _, err := io.Copy(dst, src); err != nil {
+	if _, err := copyWithProgress(dst, src, total, progress); err != nil {
 		return "", fmt.Errorf("download remote file: %w", err)
 	}
 
@@ -169,6 +181,10 @@ func (m *Manager) Download(sessionID string, remotePath string) (string, error) 
 }
 
 func (m *Manager) Upload(sessionID string, localPath string, remoteDir string) (Directory, error) {
+	return m.UploadWithProgress(sessionID, localPath, remoteDir, nil)
+}
+
+func (m *Manager) UploadWithProgress(sessionID string, localPath string, remoteDir string, progress ProgressFunc) (Directory, error) {
 	s, err := m.get(sessionID)
 	if err != nil {
 		return Directory{}, err
@@ -179,6 +195,12 @@ func (m *Manager) Upload(sessionID string, localPath string, remoteDir string) (
 		return Directory{}, fmt.Errorf("open local file: %w", err)
 	}
 	defer src.Close()
+
+	info, err := src.Stat()
+	if err != nil {
+		return Directory{}, fmt.Errorf("stat local file: %w", err)
+	}
+	total := info.Size()
 
 	resolvedDir, err := s.client.RealPath(remoteDir)
 	if err != nil || resolvedDir == "" {
@@ -192,7 +214,7 @@ func (m *Manager) Upload(sessionID string, localPath string, remoteDir string) (
 	}
 	defer dst.Close()
 
-	if _, err := io.Copy(dst, src); err != nil {
+	if _, err := copyWithProgress(dst, src, total, progress); err != nil {
 		return Directory{}, fmt.Errorf("upload file: %w", err)
 	}
 
@@ -200,6 +222,10 @@ func (m *Manager) Upload(sessionID string, localPath string, remoteDir string) (
 }
 
 func (m *Manager) UploadContent(sessionID string, fileName string, content []byte, remoteDir string) (Directory, error) {
+	return m.UploadContentWithProgress(sessionID, fileName, content, remoteDir, nil)
+}
+
+func (m *Manager) UploadContentWithProgress(sessionID string, fileName string, content []byte, remoteDir string, progress ProgressFunc) (Directory, error) {
 	s, err := m.get(sessionID)
 	if err != nil {
 		return Directory{}, err
@@ -217,7 +243,7 @@ func (m *Manager) UploadContent(sessionID string, fileName string, content []byt
 	}
 	defer dst.Close()
 
-	if _, err := io.Copy(dst, bytes.NewReader(content)); err != nil {
+	if _, err := copyWithProgress(dst, bytes.NewReader(content), int64(len(content)), progress); err != nil {
 		return Directory{}, fmt.Errorf("upload content: %w", err)
 	}
 
@@ -306,6 +332,41 @@ func nextAvailablePath(path string) string {
 		candidate := fmt.Sprintf("%s-%d%s", base, index, ext)
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
 			return candidate
+		}
+	}
+}
+
+func copyWithProgress(dst io.Writer, src io.Reader, total int64, progress ProgressFunc) (int64, error) {
+	if progress == nil {
+		return io.Copy(dst, src)
+	}
+
+	buffer := make([]byte, 32*1024)
+	var written int64
+	var lastReported int64 = -1
+	progress(0, total)
+	for {
+		readBytes, readErr := src.Read(buffer)
+		if readBytes > 0 {
+			writeBytes, writeErr := dst.Write(buffer[:readBytes])
+			written += int64(writeBytes)
+			if written == total || written-lastReported >= 128*1024 || lastReported == -1 {
+				progress(written, total)
+				lastReported = written
+			}
+			if writeErr != nil {
+				return written, writeErr
+			}
+			if writeBytes != readBytes {
+				return written, io.ErrShortWrite
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				progress(written, total)
+				return written, nil
+			}
+			return written, readErr
 		}
 	}
 }

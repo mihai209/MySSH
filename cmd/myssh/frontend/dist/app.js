@@ -23,6 +23,8 @@
     },
     splitWidth: 420,
     resizeActive: false,
+    transfers: [],
+    transferQueueVisible: false,
     terminalBuffer: "",
     pendingTerminalWrite: "",
     terminalFlushScheduled: false,
@@ -142,6 +144,11 @@
     els.sftpSelectionCount = document.getElementById("sftp-selection-count");
     els.sftpSelectionCopy = document.getElementById("sftp-selection-copy");
     els.splitResizer = document.getElementById("split-resizer");
+    els.sftpContextMenu = document.getElementById("sftp-context-menu");
+    els.transferQueue = document.getElementById("transfer-queue");
+    els.transferQueueTitle = document.getElementById("transfer-queue-title");
+    els.transferQueueList = document.getElementById("transfer-queue-list");
+    els.transferQueueClose = document.getElementById("transfer-queue-close");
     els.toastStack = document.getElementById("toast-stack");
     els.workspaceBody = document.querySelector(".workspace-body");
     els.connectSecret = document.getElementById("connect-secret");
@@ -184,16 +191,22 @@
     els.sftpDropzone.addEventListener("dragleave", handleSFTPDragLeave);
     els.sftpDropzone.addEventListener("drop", handleSFTPDrop);
     els.splitResizer.addEventListener("mousedown", startSplitResize);
+    els.transferQueueClose.addEventListener("click", () => {
+      state.transferQueueVisible = false;
+      renderTransferQueue();
+    });
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
       }
     });
+    document.addEventListener("click", hideSFTPContextMenu);
 
     if (window.runtime?.EventsOn) {
       window.runtime.EventsOn("ssh:output", handleTerminalOutput);
       window.runtime.EventsOn("ssh:status", handleTerminalStatus);
       window.runtime.EventsOn("ssh:hostkey", handleUnknownHostKey);
+      window.runtime.EventsOn("sftp:transfer", handleSFTPTransfer);
     }
 
     window.addEventListener("resize", debounceResizeTerminal);
@@ -879,9 +892,11 @@
         row.classList.add("selected");
       }
       const kind = entry.isDir ? "folder" : detectFileKind(entry.name);
+      const icon = getSFTPIcon(entry, kind);
       row.innerHTML = `
         <input class="sftp-entry-check" type="checkbox" data-sftp-select="${escapeHtml(entry.path)}" ${state.sftp.selectedPaths.includes(entry.path) ? "checked" : ""} />
         <div class="sftp-entry-main">
+          <span class="sftp-entry-icon ${entry.isDir ? "folder" : "file"}">${icon}</span>
           <div class="sftp-entry-name">${escapeHtml(entry.name)}</div>
         </div>
         <div class="sftp-entry-meta">${escapeHtml(formatTimestamp(entry.modified))}</div>
@@ -905,6 +920,20 @@
       });
       row.querySelector("[data-sftp-rename]").addEventListener("click", () => renameSFTPEntry(entry));
       row.querySelector("[data-sftp-delete]").addEventListener("click", () => deleteSFTPEntry(entry));
+      row.addEventListener("dblclick", (event) => {
+        if (event.target.closest("button, input")) {
+          return;
+        }
+        if (entry.isDir) {
+          navigateSFTP(entry.path);
+        } else {
+          downloadSFTPFile(entry.path);
+        }
+      });
+      row.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        openSFTPContextMenu(entry, event.clientX, event.clientY);
+      });
       els.sftpList.appendChild(row);
     });
     syncSFTPBulkActions();
@@ -1018,6 +1047,46 @@
     els.sftpDropzone.classList.remove("active");
   }
 
+  function openSFTPContextMenu(entry, x, y) {
+    els.sftpContextMenu.innerHTML = "";
+    const actions = [
+      {
+        label: entry.isDir ? "Open Folder" : "Download",
+        run: () => (entry.isDir ? navigateSFTP(entry.path) : downloadSFTPFile(entry.path)),
+      },
+      {
+        label: state.sftp.selectedPaths.includes(entry.path) ? "Unselect" : "Select",
+        run: () => toggleSFTPSelection(entry.path, !state.sftp.selectedPaths.includes(entry.path)),
+      },
+      {
+        label: "Rename",
+        run: () => renameSFTPEntry(entry),
+      },
+      {
+        label: "Delete",
+        run: () => deleteSFTPEntry(entry),
+      },
+    ];
+    actions.forEach((action) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sftp-context-item";
+      button.textContent = action.label;
+      button.addEventListener("click", () => {
+        hideSFTPContextMenu();
+        action.run();
+      });
+      els.sftpContextMenu.appendChild(button);
+    });
+    els.sftpContextMenu.style.left = `${x}px`;
+    els.sftpContextMenu.style.top = `${y}px`;
+    els.sftpContextMenu.classList.remove("hidden");
+  }
+
+  function hideSFTPContextMenu() {
+    els.sftpContextMenu.classList.add("hidden");
+  }
+
   async function handleSFTPDrop(event) {
     event.preventDefault();
     els.sftpDropzone.classList.remove("active");
@@ -1043,6 +1112,64 @@
       showToast(String(error), true);
       setSFTPLoader(false);
     }
+  }
+
+  function handleSFTPTransfer(payload) {
+    if (!payload?.id) {
+      return;
+    }
+    const existing = state.transfers.find((item) => item.id === payload.id);
+    if (existing) {
+      Object.assign(existing, payload, {
+        done: Number(payload.done ?? existing.done ?? 0),
+        total: Number(payload.total ?? existing.total ?? 0),
+      });
+    } else {
+      state.transfers.unshift({
+        id: payload.id,
+        type: payload.type || "transfer",
+        name: payload.name || "Transfer",
+        path: payload.path || "",
+        state: payload.state || "starting",
+        done: Number(payload.done || 0),
+        total: Number(payload.total || 0),
+        message: payload.message || "",
+        localPath: payload.localPath || "",
+      });
+    }
+    state.transferQueueVisible = true;
+    state.transfers = state.transfers.slice(0, 12);
+    renderTransferQueue();
+  }
+
+  function renderTransferQueue() {
+    const visible = state.transferQueueVisible && state.transfers.length > 0;
+    els.transferQueue.classList.toggle("hidden", !visible);
+    if (!visible) {
+      return;
+    }
+    const running = state.transfers.filter((item) => item.state === "running" || item.state === "starting").length;
+    els.transferQueueTitle.textContent = running ? `${running} active transfer${running === 1 ? "" : "s"}` : "Recent transfers";
+    els.transferQueueList.innerHTML = "";
+    state.transfers.forEach((transfer) => {
+      const item = document.createElement("article");
+      item.className = "transfer-item";
+      const percent = transfer.total > 0 ? Math.max(0, Math.min(100, Math.round((transfer.done / transfer.total) * 100))) : (transfer.state === "completed" ? 100 : 8);
+      const meta = transfer.state === "error"
+        ? transfer.message || "Transfer failed"
+        : transfer.state === "completed"
+          ? transfer.localPath ? `Saved to ${transfer.localPath}` : "Transfer completed"
+          : `${formatSize(transfer.done)} / ${formatSize(transfer.total)}`;
+      item.innerHTML = `
+        <div class="transfer-item-head">
+          <span class="transfer-item-name">${escapeHtml(transfer.name)}</span>
+          <span class="transfer-item-meta">${escapeHtml(transfer.type)} • ${escapeHtml(transfer.state)}</span>
+        </div>
+        <div class="transfer-progress"><div class="transfer-progress-bar" style="width:${percent}%"></div></div>
+        <div class="transfer-item-meta">${escapeHtml(meta)}</div>
+      `;
+      els.transferQueueList.appendChild(item);
+    });
   }
 
   function toggleSFTP() {
@@ -1746,7 +1873,10 @@
 
   function formatSize(value) {
     const size = Number(value || 0);
-    if (!Number.isFinite(size) || size < 1024) {
+    if (!Number.isFinite(size) || size <= 0) {
+      return "0 B";
+    }
+    if (size < 1024) {
       return `${size || 0} B`;
     }
     if (size < 1024 * 1024) {
@@ -1765,5 +1895,27 @@
       return "file";
     }
     return `${parts.pop().toLowerCase()} file`;
+  }
+
+  function getSFTPIcon(entry, kind) {
+    if (entry.isDir) {
+      return "📁";
+    }
+    if (kind.includes("png") || kind.includes("jpg") || kind.includes("jpeg") || kind.includes("gif") || kind.includes("webp") || kind.includes("svg")) {
+      return "🖼";
+    }
+    if (kind.includes("zip") || kind.includes("tar") || kind.includes("gz") || kind.includes("rar")) {
+      return "🗜";
+    }
+    if (kind.includes("log") || kind.includes("txt") || kind.includes("md")) {
+      return "📄";
+    }
+    if (kind.includes("json") || kind.includes("yaml") || kind.includes("yml") || kind.includes("toml") || kind.includes("xml")) {
+      return "🧩";
+    }
+    if (kind.includes("sh") || kind.includes("js") || kind.includes("ts") || kind.includes("go") || kind.includes("py") || kind.includes("rs") || kind.includes("php")) {
+      return "⌘";
+    }
+    return "📄";
   }
 })();
