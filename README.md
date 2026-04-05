@@ -13,6 +13,7 @@ It is designed to feel fast and native, without Electron, while still supporting
 - Multiple session tabs
 - Rename, reconnect, and close per tab
 - Built-in SFTP browser
+- Desktop entry install / remove commands
 - Password authentication
 - Private key authentication
 - Private key passphrase support
@@ -80,6 +81,14 @@ MySSH includes a built-in SFTP browser with:
 - folder navigation
 - refresh
 - parent directory navigation
+- upload
+- drag and drop upload
+- rename
+- delete
+- mkdir
+- multi-select
+- bulk download
+- bulk delete
 - file download to `~/Downloads/MySSH`
 
 ## Project Layout
@@ -122,10 +131,22 @@ Run it with:
 ./myssh
 ```
 
+Install a desktop launcher on Linux:
+
+```bash
+./myssh --install
+```
+
+Remove it again:
+
+```bash
+./myssh --remove
+```
+
 ## Development Notes
 
-- Local shell support is currently Linux-first.
-- SFTP currently supports browsing and downloading.
+- Local shell support currently works on Linux, macOS, and BSD.
+- SFTP supports browsing, uploads, drag and drop, bulk actions, and split view with the terminal.
 - Terminal sessions can continue in the background after leaving the session screen.
 - If a remote host is missing from `known_hosts`, MySSH will ask you to trust it first.
 
@@ -135,8 +156,9 @@ The repository includes a GitHub Actions workflow that builds the app for Linux 
 
 ## Roadmap
 
-- SFTP upload
-- rename / delete / mkdir in SFTP
-- split terminal + SFTP view
-- more session polish
-- broader platform support for local terminal mode
+- window/app icon packaging beyond the desktop entry icon
+- persistent split layout sizing
+- recursive folder upload in SFTP
+- drag files directly onto target folders in the SFTP pane
+- inline rename and richer file actions
+- broader platform support for desktop integration
