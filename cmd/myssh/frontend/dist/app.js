@@ -228,7 +228,7 @@
     els.machineAuth.textContent = profile.authKind || "agent";
     els.machineSecretState.textContent = profile.hasStoredSecret ? "stored in OS keyring" : profile.keyPath ? "key path reference" : "none";
     els.editProfile.disabled = false;
-    els.connectProfile.disabled = !(profile.authKind === "agent" || profile.authKind === "password");
+    els.connectProfile.disabled = !(profile.authKind === "agent" || profile.authKind === "password" || profile.authKind === "private_key");
   }
 
   function openCreateModal() {
@@ -337,8 +337,8 @@
 
   async function connectProfile() {
     const profile = state.profiles.find((item) => item.id === state.selectedId);
-    if (!profile || !(profile.authKind === "agent" || profile.authKind === "password")) {
-      setStatus("Connect is currently available only for password and agent profiles.");
+    if (!profile || !(profile.authKind === "agent" || profile.authKind === "password" || profile.authKind === "private_key")) {
+      setStatus("Connect is currently available only for password, agent, and private key profiles.");
       return;
     }
 

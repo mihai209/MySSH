@@ -251,13 +251,19 @@ func (a *App) ConnectProfile(id string) error {
 	}
 
 	secretValue := ""
-	if profile.AuthKind == domain.AuthPassword {
+	if profile.AuthKind == domain.AuthPassword || (profile.AuthKind == domain.AuthPrivateKey && profile.KeySource == domain.KeySourceContent) {
 		if profile.SecretRef == "" {
-			return fmt.Errorf("password profile has no stored secret")
+			if profile.AuthKind == domain.AuthPassword {
+				return fmt.Errorf("password profile has no stored secret")
+			}
+			return fmt.Errorf("private key content profile has no stored secret")
 		}
 		secretValue, err = a.secretStore.Get(profile.SecretRef)
 		if err != nil {
-			return fmt.Errorf("load password from keyring: %w", err)
+			if profile.AuthKind == domain.AuthPassword {
+				return fmt.Errorf("load password from keyring: %w", err)
+			}
+			return fmt.Errorf("load private key content from keyring: %w", err)
 		}
 	}
 

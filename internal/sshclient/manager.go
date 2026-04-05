@@ -237,6 +237,12 @@ func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Cli
 	switch profile.AuthKind {
 	case domain.AuthPassword:
 		config.Auth = []ssh.AuthMethod{ssh.Password(secret)}
+	case domain.AuthPrivateKey:
+		auth, err := privateKeyAuthMethod(profile, secret)
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		config.Auth = []ssh.AuthMethod{auth}
 	case domain.AuthAgent:
 		auth, signerCount, err := agentAuthMethod()
 		if err != nil {
@@ -245,7 +251,7 @@ func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Cli
 		agentSignerCount = signerCount
 		config.Auth = []ssh.AuthMethod{auth}
 	default:
-		return nil, nil, nil, nil, nil, fmt.Errorf("connect currently supports only password and agent auth")
+		return nil, nil, nil, nil, nil, fmt.Errorf("connect currently supports password, agent, and private_key auth")
 	}
 
 	address := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
@@ -253,6 +259,9 @@ func dial(profile domain.Profile, secret string, connectSecret string) (*ssh.Cli
 	if err != nil {
 		if profile.AuthKind == domain.AuthAgent {
 			return nil, nil, nil, nil, nil, fmt.Errorf("ssh-agent auth failed (%d keys loaded). Make sure the correct key is loaded with ssh-add and that the server accepts it: %w", agentSignerCount, err)
+		}
+		if profile.AuthKind == domain.AuthPrivateKey {
+			return nil, nil, nil, nil, nil, fmt.Errorf("private key auth failed: %w", err)
 		}
 		return nil, nil, nil, nil, nil, err
 	}
@@ -332,6 +341,39 @@ func agentAuthMethod() (ssh.AuthMethod, int, error) {
 	}
 
 	return ssh.PublicKeys(signers...), len(signers), nil
+}
+
+func privateKeyAuthMethod(profile domain.Profile, secret string) (ssh.AuthMethod, error) {
+	var keyData []byte
+
+	switch profile.KeySource {
+	case domain.KeySourcePath:
+		if profile.KeyPath == "" {
+			return nil, fmt.Errorf("private key path is empty")
+		}
+		data, err := os.ReadFile(profile.KeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("read private key file: %w", err)
+		}
+		keyData = data
+	case domain.KeySourceContent:
+		if secret == "" {
+			return nil, fmt.Errorf("private key content is missing from keyring")
+		}
+		keyData = []byte(secret)
+	default:
+		return nil, fmt.Errorf("private key auth requires key source path or content")
+	}
+
+	signer, err := ssh.ParsePrivateKey(keyData)
+	if err != nil {
+		if _, ok := err.(*ssh.PassphraseMissingError); ok {
+			return nil, fmt.Errorf("encrypted private keys are not supported yet")
+		}
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+
+	return ssh.PublicKeys(signer), nil
 }
 
 func knownHostsCallback() (ssh.HostKeyCallback, error) {
