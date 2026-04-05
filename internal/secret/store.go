@@ -35,6 +35,15 @@ func (s *Store) Set(key string, value string) error {
 	})
 }
 
+func (s *Store) Get(key string) (string, error) {
+	item, err := s.ring.Get(key)
+	if err != nil {
+		return "", err
+	}
+
+	return string(item.Data), nil
+}
+
 func (s *Store) Delete(key string) error {
 	err := s.ring.Remove(key)
 	if err == keyring.ErrKeyNotFound {

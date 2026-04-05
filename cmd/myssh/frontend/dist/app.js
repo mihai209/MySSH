@@ -3,6 +3,9 @@
     profiles: [],
     filtered: [],
     selectedId: "",
+    terminalVisible: false,
+    terminal: null,
+    fitAddon: null,
   };
 
   const els = {};
@@ -60,6 +63,14 @@
     els.keyContent = document.getElementById("key-content");
     els.modalSecurityCopy = document.getElementById("modal-security-copy");
     els.secret = document.getElementById("secret");
+    els.terminalScreen = document.getElementById("terminal-screen");
+    els.terminalTitle = document.getElementById("terminal-title");
+    els.terminalSubtitle = document.getElementById("terminal-subtitle");
+    els.terminalStatusChip = document.getElementById("terminal-status-chip");
+    els.terminalLoader = document.getElementById("terminal-loader");
+    els.terminalLoaderText = document.getElementById("terminal-loader-text");
+    els.terminalContainer = document.getElementById("terminal-container");
+    els.terminalBack = document.getElementById("terminal-back");
   }
 
   function bindEvents() {
@@ -69,15 +80,23 @@
     els.closeModal.addEventListener("click", closeModal);
     els.cancelModal.addEventListener("click", closeModal);
     els.saveProfile.addEventListener("click", saveProfile);
-    els.connectProfile.addEventListener("click", connectPlaceholder);
+    els.connectProfile.addEventListener("click", connectProfile);
     els.deleteProfile.addEventListener("click", deleteProfile);
     els.authKind.addEventListener("change", updateSecurityCopy);
     els.keySource.addEventListener("change", updateSecurityCopy);
+    els.terminalBack.addEventListener("click", closeTerminal);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
       }
     });
+
+    if (window.runtime?.EventsOn) {
+      window.runtime.EventsOn("ssh:output", handleTerminalOutput);
+      window.runtime.EventsOn("ssh:status", handleTerminalStatus);
+    }
+
+    window.addEventListener("resize", debounceResizeTerminal);
   }
 
   async function bootstrap() {
@@ -169,6 +188,7 @@
       els.heroCopy.textContent = hasProfiles
         ? "Select a machine from the left or add a new one."
         : "Start by adding an SSH machine. Passwords and pasted private keys are persisted in your OS keyring.";
+      els.connectProfile.disabled = true;
       return;
     }
 
@@ -176,7 +196,7 @@
     els.machineDetail.classList.remove("hidden");
     els.detailTitle.textContent = profile.name || "Machine";
     els.heroTitle.textContent = profile.name || "SSH Machine";
-    els.heroCopy.textContent = "Connect is a placeholder for now. Delete already removes the profile from local metadata.";
+    els.heroCopy.textContent = "Connect opens a dedicated terminal workspace with loader, live output and autoreconnect.";
     els.machineMeta.textContent = `${profile.username}@${profile.host}:${profile.port}`;
     els.machineName.textContent = profile.name || "-";
     els.machineUsername.textContent = profile.username || "-";
@@ -184,6 +204,7 @@
     els.machinePort.textContent = String(profile.port || 22);
     els.machineAuth.textContent = profile.authKind || "agent";
     els.machineSecretState.textContent = profile.hasStoredSecret ? "stored in OS keyring" : profile.keyPath ? "key path reference" : "none";
+    els.connectProfile.disabled = !(profile.authKind === "agent" || profile.authKind === "password");
   }
 
   function openCreateModal() {
@@ -256,13 +277,26 @@
     }
   }
 
-  function connectPlaceholder() {
+  async function connectProfile() {
     const profile = state.profiles.find((item) => item.id === state.selectedId);
-    if (!profile) {
+    if (!profile || !(profile.authKind === "agent" || profile.authKind === "password")) {
+      setStatus("Connect is currently available only for password and agent profiles.");
       return;
     }
 
-    setStatus(`Connect placeholder for ${profile.username}@${profile.host}:${profile.port}`);
+    openTerminal(profile);
+    setTerminalLoader(true, `Connecting to ${profile.host}...`);
+    setTerminalStatus("Connecting");
+    appendTerminalOutput(`[MySSH] Connecting to ${profile.username}@${profile.host}:${profile.port}\n`);
+
+    try {
+      await window.go.main.App.ConnectProfile(profile.id);
+    } catch (error) {
+      setTerminalLoader(false);
+      setTerminalStatus("Error");
+      appendTerminalOutput(`[MySSH] Connection error: ${String(error)}\n`);
+      setStatus(String(error), true);
+    }
   }
 
   function updateSecurityCopy() {
@@ -315,6 +349,126 @@
   function setStatus(message, isError) {
     els.statusText.textContent = message;
     els.statusText.style.color = isError ? "#ff8da0" : "";
+  }
+
+  function openTerminal(profile) {
+    state.terminalVisible = true;
+    els.terminalScreen.classList.remove("hidden");
+    els.terminalTitle.textContent = profile.name || "SSH Session";
+    els.terminalSubtitle.textContent = `${profile.username}@${profile.host}:${profile.port}`;
+    ensureTerminal();
+    state.terminal.reset();
+    state.terminal.focus();
+  }
+
+  async function closeTerminal() {
+    state.terminalVisible = false;
+    els.terminalScreen.classList.add("hidden");
+    setTerminalLoader(false);
+    setTerminalStatus("Idle");
+    try {
+      await window.go.main.App.DisconnectTerminal();
+    } catch (_) {
+      // best effort disconnect
+    }
+  }
+
+  function handleTerminalOutput(payload) {
+    if (!state.terminalVisible) {
+      return;
+    }
+    appendTerminalOutput(payload?.chunk || "");
+  }
+
+  function handleTerminalStatus(payload) {
+    const message = payload?.message || "SSH status update";
+    const status = payload?.state || "Idle";
+    const profile = payload?.profile || {};
+
+    setTerminalStatus(status);
+    els.terminalTitle.textContent = profile.name || "SSH Session";
+    els.terminalSubtitle.textContent = profile.host ? `${profile.username}@${profile.host}:${profile.port}` : "Waiting for connection...";
+
+    if (status === "connecting" || status === "reconnecting") {
+      setTerminalLoader(true, message);
+    } else {
+      setTerminalLoader(false);
+    }
+
+    if (state.terminalVisible) {
+      appendTerminalOutput(`[MySSH] ${message}\n`);
+    }
+  }
+
+  function appendTerminalOutput(chunk) {
+    if (!state.terminal) {
+      return;
+    }
+    state.terminal.write(chunk);
+  }
+
+  function setTerminalLoader(visible, message) {
+    els.terminalLoader.classList.toggle("hidden", !visible);
+    if (message) {
+      els.terminalLoaderText.textContent = message;
+    }
+  }
+
+  function setTerminalStatus(status) {
+    els.terminalStatusChip.textContent = status;
+  }
+
+  function ensureTerminal() {
+    if (state.terminal) {
+      fitTerminal();
+      return;
+    }
+
+    state.terminal = new window.Terminal({
+      cursorBlink: true,
+      fontFamily: "Cascadia Code, Fira Code, monospace",
+      fontSize: 13,
+      theme: {
+        background: "#050b12",
+        foreground: "#d7e8f7",
+        cursor: "#4fb3ff",
+        selectionBackground: "rgba(79, 179, 255, 0.25)",
+      },
+      scrollback: 5000,
+      convertEol: false,
+    });
+
+    state.fitAddon = new window.FitAddon.FitAddon();
+    state.terminal.loadAddon(state.fitAddon);
+    state.terminal.open(els.terminalContainer);
+    fitTerminal();
+
+    state.terminal.onData((data) => {
+      window.go.main.App.SendTerminalInput(data).catch((error) => {
+        appendTerminalOutput(`\n[MySSH] Input error: ${String(error)}\n`);
+      });
+    });
+
+    state.terminal.onResize((size) => {
+      window.go.main.App.ResizeTerminal(size.cols, size.rows).catch(() => {});
+    });
+  }
+
+  function fitTerminal() {
+    if (!state.fitAddon || !state.terminalVisible) {
+      return;
+    }
+    state.fitAddon.fit();
+    const cols = state.terminal.cols;
+    const rows = state.terminal.rows;
+    window.go.main.App.ResizeTerminal(cols, rows).catch(() => {});
+  }
+
+  function debounceResizeTerminal() {
+    window.clearTimeout(debounceResizeTerminal._timer);
+    debounceResizeTerminal._timer = window.setTimeout(() => {
+      fitTerminal();
+    }, 120);
   }
 
   function escapeHtml(value) {

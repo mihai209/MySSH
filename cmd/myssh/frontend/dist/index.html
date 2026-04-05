@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MySSH</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./vendor/xterm.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -152,6 +153,27 @@
       </main>
     </div>
 
+    <section class="terminal-screen hidden" id="terminal-screen">
+      <header class="terminal-topbar">
+        <div>
+          <p class="eyebrow">Session</p>
+          <h2 id="terminal-title">SSH Session</h2>
+          <p class="terminal-subtitle" id="terminal-subtitle">Waiting for connection...</p>
+        </div>
+        <div class="terminal-topbar-actions">
+          <span class="status-chip" id="terminal-status-chip">Idle</span>
+          <button class="ghost-button" id="terminal-back">Back</button>
+        </div>
+      </header>
+
+      <div class="terminal-loader hidden" id="terminal-loader">
+        <div class="loader-spinner"></div>
+        <p id="terminal-loader-text">Connecting...</p>
+      </div>
+
+      <div class="terminal-output" id="terminal-container"></div>
+    </section>
+
     <div class="modal-backdrop hidden" id="modal-backdrop">
       <section class="modal">
         <div class="modal-header">
@@ -223,6 +245,8 @@
       </section>
     </div>
 
+    <script src="./vendor/xterm.js"></script>
+    <script src="./vendor/xterm-addon-fit.js"></script>
     <script src="./app.js"></script>
   </body>
   </html>

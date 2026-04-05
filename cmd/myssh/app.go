@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	appsvc "myssh/internal/app"
 	"myssh/internal/domain"
 	"myssh/internal/secret"
+	"myssh/internal/sshclient"
 )
 
 type App struct {
 	ctx         context.Context
 	service     *appsvc.Service
 	secretStore *secret.Store
+	sshManager  *sshclient.Manager
 	dataDir     string
 }
 
@@ -53,11 +56,17 @@ type SaveProfileInput struct {
 }
 
 func NewApp(service *appsvc.Service, secretStore *secret.Store, dataDir string) *App {
-	return &App{
+	app := &App{
 		service:     service,
 		secretStore: secretStore,
 		dataDir:     dataDir,
 	}
+	app.sshManager = sshclient.NewManager(func(name string, payload interface{}) {
+		if app.ctx != nil {
+			runtime.EventsEmit(app.ctx, name, payload)
+		}
+	})
+	return app
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -183,6 +192,57 @@ func (a *App) DeleteProfile(id string) error {
 
 func (a *App) Ping() string {
 	return fmt.Sprintf("MySSH backend ready: %s", a.dataDir)
+}
+
+func (a *App) ConnectProfile(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("profile id is required")
+	}
+
+	profiles, err := a.service.ListProfiles()
+	if err != nil {
+		return err
+	}
+
+	var profile domain.Profile
+	found := false
+	for _, item := range profiles {
+		if item.ID == id {
+			profile = item
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("profile not found")
+	}
+
+	secretValue := ""
+	if profile.AuthKind == domain.AuthPassword {
+		if profile.SecretRef == "" {
+			return fmt.Errorf("password profile has no stored secret")
+		}
+		secretValue, err = a.secretStore.Get(profile.SecretRef)
+		if err != nil {
+			return fmt.Errorf("load password from keyring: %w", err)
+		}
+	}
+
+	return a.sshManager.Connect(a.ctx, profile, secretValue)
+}
+
+func (a *App) SendTerminalInput(input string) error {
+	return a.sshManager.SendInput(input)
+}
+
+func (a *App) ResizeTerminal(cols int, rows int) error {
+	return a.sshManager.Resize(cols, rows)
+}
+
+func (a *App) DisconnectTerminal() {
+	a.sshManager.Disconnect()
 }
 
 func toProfileDTO(profile domain.Profile) ProfileDTO {
