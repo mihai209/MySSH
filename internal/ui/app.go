@@ -107,6 +107,9 @@ func (s *screen) build() {
 	s.portEntry.SetPlaceHolder("22")
 	s.portEntry.SetText(strconv.Itoa(domain.DefaultSSHPort))
 
+	s.secretHint = widget.NewLabel("")
+	s.secretHint.Wrapping = fyne.TextWrapWord
+
 	s.authSelect = widget.NewSelect([]string{
 		string(domain.AuthPassword),
 		string(domain.AuthPrivateKey),
@@ -120,8 +123,6 @@ func (s *screen) build() {
 	s.secretEntry.SetPlaceHolder("Temporary input only")
 	s.secretEntry.Disable()
 
-	s.secretHint = widget.NewLabel("")
-	s.secretHint.Wrapping = fyne.TextWrapWord
 	s.updateSecretHint(string(domain.AuthAgent))
 
 	s.statusLabel = widget.NewLabel("Ready.")
@@ -227,6 +228,10 @@ func (s *screen) saveProfile() {
 }
 
 func (s *screen) updateSecretHint(auth string) {
+	if s.secretHint == nil {
+		return
+	}
+
 	switch auth {
 	case string(domain.AuthPassword):
 		s.secretHint.SetText("Password storage is intentionally disabled for now. Next step: OS keyring integration.")
