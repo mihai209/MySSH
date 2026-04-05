@@ -124,6 +124,14 @@
                   </span>
                   Connect
                 </button>
+                <button class="ghost-button" id="open-sftp">
+                  <span class="button-icon">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 7h16v10H4zM8 11h8M8 15h5"></path>
+                    </svg>
+                  </span>
+                  SFTP
+                </button>
                 <button class="danger-button" id="delete-profile">
                   <span class="button-icon">
                     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -207,6 +215,37 @@
       <div class="terminal-output" id="terminal-container"></div>
     </section>
 
+    <section class="terminal-screen hidden" id="sftp-screen">
+      <header class="terminal-topbar">
+        <div>
+          <p class="eyebrow">SFTP</p>
+          <h2 id="sftp-title">SFTP Browser</h2>
+          <p class="terminal-subtitle" id="sftp-subtitle">Waiting for session...</p>
+        </div>
+        <div class="terminal-topbar-actions">
+          <span class="status-chip" id="sftp-status-chip">Idle</span>
+          <button class="ghost-button" id="sftp-refresh">Refresh</button>
+          <button class="ghost-button" id="sftp-up">Up</button>
+          <button class="ghost-button" id="sftp-close">Close</button>
+          <button class="ghost-button" id="sftp-back">Back</button>
+        </div>
+      </header>
+
+      <div class="terminal-loader hidden" id="sftp-loader">
+        <div class="loader-spinner"></div>
+        <p id="sftp-loader-text">Loading files...</p>
+      </div>
+
+      <div class="sftp-toolbar">
+        <div class="info-card sftp-path-card">
+          <span>Path</span>
+          <p id="sftp-path">/</p>
+        </div>
+      </div>
+
+      <div class="sftp-list" id="sftp-list"></div>
+    </section>
+
     <div class="modal-backdrop hidden" id="modal-backdrop">
       <section class="modal">
         <div class="modal-header">
@@ -287,6 +326,8 @@
         </div>
       </section>
     </div>
+
+    <div class="toast-stack" id="toast-stack"></div>
 
     <script src="./vendor/xterm.js"></script>
     <script src="./vendor/xterm-addon-fit.js"></script>

@@ -11,6 +11,15 @@
     webglEnabled: false,
     sessions: [],
     activeSessionId: "",
+    sftp: {
+      visible: false,
+      sessionId: "",
+      profileId: "",
+      profileName: "",
+      path: "",
+      parent: "",
+      entries: [],
+    },
     terminalBuffer: "",
     pendingTerminalWrite: "",
     terminalFlushScheduled: false,
@@ -57,6 +66,7 @@
     els.saveProfile = document.getElementById("save-profile");
     els.editProfile = document.getElementById("edit-profile");
     els.connectProfile = document.getElementById("connect-profile");
+    els.openSFTP = document.getElementById("open-sftp");
     els.deleteProfile = document.getElementById("delete-profile");
     els.modalTitle = document.getElementById("modal-title");
     els.modalNote = document.getElementById("modal-note");
@@ -94,6 +104,19 @@
     els.terminalCopy = document.getElementById("terminal-copy");
     els.terminalPaste = document.getElementById("terminal-paste");
     els.terminalBack = document.getElementById("terminal-back");
+    els.sftpScreen = document.getElementById("sftp-screen");
+    els.sftpTitle = document.getElementById("sftp-title");
+    els.sftpSubtitle = document.getElementById("sftp-subtitle");
+    els.sftpStatusChip = document.getElementById("sftp-status-chip");
+    els.sftpLoader = document.getElementById("sftp-loader");
+    els.sftpLoaderText = document.getElementById("sftp-loader-text");
+    els.sftpPath = document.getElementById("sftp-path");
+    els.sftpList = document.getElementById("sftp-list");
+    els.sftpRefresh = document.getElementById("sftp-refresh");
+    els.sftpUp = document.getElementById("sftp-up");
+    els.sftpClose = document.getElementById("sftp-close");
+    els.sftpBack = document.getElementById("sftp-back");
+    els.toastStack = document.getElementById("toast-stack");
     els.connectSecret = document.getElementById("connect-secret");
   }
 
@@ -107,6 +130,7 @@
     els.saveProfile.addEventListener("click", saveProfile);
     els.editProfile.addEventListener("click", openEditModal);
     els.connectProfile.addEventListener("click", connectProfile);
+    els.openSFTP.addEventListener("click", openSFTP);
     els.deleteProfile.addEventListener("click", deleteProfile);
     els.authKind.addEventListener("change", updateSecurityCopy);
     els.keySource.addEventListener("change", updateSecurityCopy);
@@ -118,6 +142,10 @@
     els.terminalGpuToggle.addEventListener("click", toggleTerminalGpu);
     els.terminalCopy.addEventListener("click", copyTerminalSelection);
     els.terminalPaste.addEventListener("click", pasteIntoTerminal);
+    els.sftpRefresh.addEventListener("click", refreshSFTP);
+    els.sftpUp.addEventListener("click", goUpSFTP);
+    els.sftpClose.addEventListener("click", closeSFTP);
+    els.sftpBack.addEventListener("click", hideSFTP);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -225,6 +253,7 @@
         : "Start by adding an SSH machine. Passwords and pasted private keys are persisted in your OS keyring.";
       els.editProfile.disabled = true;
       els.connectProfile.disabled = true;
+      els.openSFTP.disabled = true;
       return;
     }
 
@@ -242,6 +271,7 @@
     els.machineSecretState.textContent = describeSecretState(profile);
     els.editProfile.disabled = false;
     els.connectProfile.disabled = !canConnectProfile(profile);
+    els.openSFTP.disabled = !canOpenSFTP(profile);
   }
 
   function openCreateModal() {
@@ -421,6 +451,89 @@
     }
   }
 
+  async function openSFTP() {
+    const profile = state.profiles.find((item) => item.id === state.selectedId);
+    if (!profile || !canOpenSFTP(profile)) {
+      showToast("SFTP needs a valid SSH profile with working authentication.", true);
+      return;
+    }
+
+    state.sftp.visible = true;
+    state.sftp.profileId = profile.id;
+    state.sftp.profileName = profile.name || "SFTP Browser";
+    state.sftp.sessionId = "";
+    state.sftp.path = "";
+    state.sftp.parent = "";
+    state.sftp.entries = [];
+    syncSFTPView();
+    setSFTPLoader(true, `Opening SFTP for ${profile.host}...`);
+
+    try {
+      const directory = await window.go.main.App.OpenSFTP(profile.id);
+      updateSFTPDirectory(directory);
+      setSFTPLoader(false);
+      els.sftpStatusChip.textContent = "Ready";
+      showToast(`SFTP opened for ${profile.name || profile.host}.`);
+    } catch (error) {
+      setSFTPLoader(false);
+      els.sftpStatusChip.textContent = "Error";
+      showToast(String(error), true);
+    }
+  }
+
+  async function refreshSFTP() {
+    if (!state.sftp.sessionId || !state.sftp.path) {
+      return;
+    }
+    setSFTPLoader(true, `Refreshing ${state.sftp.path}...`);
+    try {
+      const directory = await window.go.main.App.ListSFTP(state.sftp.sessionId, state.sftp.path);
+      updateSFTPDirectory(directory);
+      showToast("SFTP list refreshed.");
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function goUpSFTP() {
+    if (!state.sftp.parent) {
+      return;
+    }
+    await navigateSFTP(state.sftp.parent);
+  }
+
+  async function navigateSFTP(path) {
+    if (!state.sftp.sessionId) {
+      return;
+    }
+    setSFTPLoader(true, `Loading ${path}...`);
+    try {
+      const directory = await window.go.main.App.ListSFTP(state.sftp.sessionId, path);
+      updateSFTPDirectory(directory);
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
+  async function downloadSFTPFile(path) {
+    if (!state.sftp.sessionId) {
+      return;
+    }
+    setSFTPLoader(true, `Downloading ${path}...`);
+    try {
+      const localPath = await window.go.main.App.DownloadSFTPFile(state.sftp.sessionId, path);
+      showToast(`Downloaded to ${localPath}`);
+    } catch (error) {
+      showToast(String(error), true);
+    } finally {
+      setSFTPLoader(false);
+    }
+  }
+
   function updateSecurityCopy() {
     els.keySourceWrap.classList.add("hidden");
     els.keyPathWrap.classList.add("hidden");
@@ -514,6 +627,10 @@
     return false;
   }
 
+  function canOpenSFTP(profile) {
+    return canConnectProfile(profile);
+  }
+
   function describeSecretState(profile) {
     if (!profile) {
       return "none";
@@ -543,6 +660,101 @@
   function setStatus(message, isError) {
     els.statusText.textContent = message;
     els.statusText.style.color = isError ? "#ff8da0" : "";
+  }
+
+  function showToast(message, isError) {
+    const toast = document.createElement("div");
+    toast.className = `toast${isError ? " error" : ""}`;
+    toast.textContent = message;
+    els.toastStack.appendChild(toast);
+    window.setTimeout(() => {
+      toast.remove();
+    }, 2600);
+  }
+
+  function syncSFTPView() {
+    els.sftpScreen.classList.toggle("hidden", !state.sftp.visible);
+    if (!state.sftp.visible) {
+      return;
+    }
+    els.sftpTitle.textContent = `${state.sftp.profileName} SFTP`;
+    els.sftpSubtitle.textContent = state.sftp.profileName || "SFTP Browser";
+    els.sftpPath.textContent = state.sftp.path || "Waiting for path...";
+    els.sftpUp.disabled = !state.sftp.parent;
+    renderSFTPEntries();
+  }
+
+  function setSFTPLoader(visible, text) {
+    els.sftpLoader.classList.toggle("hidden", !visible);
+    if (text) {
+      els.sftpLoaderText.textContent = text;
+    }
+  }
+
+  function updateSFTPDirectory(directory) {
+    state.sftp.sessionId = directory.sessionId;
+    state.sftp.path = directory.path;
+    state.sftp.parent = directory.parent;
+    state.sftp.entries = directory.entries || [];
+    state.sftp.visible = true;
+    syncSFTPView();
+  }
+
+  function renderSFTPEntries() {
+    els.sftpList.innerHTML = "";
+    if (!state.sftp.entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "No files in this folder.";
+      els.sftpList.appendChild(empty);
+      return;
+    }
+
+    state.sftp.entries.forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = `sftp-entry${entry.isDir ? " sftp-entry-dir" : ""}`;
+      row.innerHTML = `
+        <div class="sftp-entry-main">
+          <div class="sftp-entry-name">${escapeHtml(entry.name)}</div>
+          <div class="sftp-entry-meta">${escapeHtml(entry.mode)} • ${entry.isDir ? "directory" : `${entry.size} bytes`}</div>
+        </div>
+        <div class="sftp-entry-meta">${escapeHtml(formatTimestamp(entry.modified))}</div>
+        <button class="ghost-button" data-sftp-open="${escapeHtml(entry.path)}">${entry.isDir ? "Open" : "Download"}</button>
+      `;
+      row.querySelector("[data-sftp-open]").addEventListener("click", () => {
+        if (entry.isDir) {
+          navigateSFTP(entry.path);
+          return;
+        }
+        downloadSFTPFile(entry.path);
+      });
+      els.sftpList.appendChild(row);
+    });
+  }
+
+  async function closeSFTP() {
+    if (state.sftp.sessionId) {
+      try {
+        await window.go.main.App.CloseSFTP(state.sftp.sessionId);
+      } catch (_) {}
+    }
+    state.sftp = {
+      visible: false,
+      sessionId: "",
+      profileId: "",
+      profileName: "",
+      path: "",
+      parent: "",
+      entries: [],
+    };
+    syncSFTPView();
+    showToast("SFTP session closed.");
+  }
+
+  function hideSFTP() {
+    state.sftp.visible = false;
+    syncSFTPView();
+    showToast("SFTP browser hidden. Session stays open until Close.");
   }
 
   function openSessionTab(session) {
@@ -654,6 +866,9 @@
   async function closeTerminal() {
     state.terminalVisible = false;
     els.terminalScreen.classList.add("hidden");
+    if (state.sessions.length) {
+      showToast("Session remains active in background until you press Close.");
+    }
   }
 
   async function closeActiveSession() {
@@ -1024,11 +1239,11 @@
   async function copyTerminalSelection() {
     const selection = state.terminal?.getSelection?.() || "";
     if (!selection) {
-      setStatus("Nothing selected in terminal.");
+      showToast("Nothing selected in terminal.", true);
       return;
     }
     await window.go.main.App.CopyToClipboard(selection);
-    setStatus("Terminal selection copied.");
+    showToast("Copied terminal selection.");
   }
 
   async function pasteIntoTerminal() {
@@ -1044,6 +1259,7 @@
       return;
     }
     await window.go.main.App.SendTerminalInput(session.backendSessionId, text);
+    showToast("Pasted from clipboard.");
   }
 
   function resolveSessionTabId(eventSessionId) {
@@ -1066,5 +1282,16 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#39;");
+  }
+
+  function formatTimestamp(value) {
+    if (!value) {
+      return "-";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString();
   }
 })();

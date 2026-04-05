@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/99designs/keyring v1.2.2
+	github.com/pkg/sftp v1.13.10
 	github.com/wailsapp/wails/v2 v2.9.2
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sys v0.42.0
@@ -20,6 +21,7 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/gsterjov/go-libsecret v0.0.0-20161001094733-a6f4afe4910c // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	github.com/labstack/echo/v4 v4.10.2 // indirect
 	github.com/labstack/gommon v0.4.0 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.0 // indirect

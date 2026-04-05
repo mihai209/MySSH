@@ -325,58 +325,8 @@ func (m *Manager) emitStatus(sessionID string, state string, profile domain.Prof
 }
 
 func dial(profile domain.Profile, secret string, passphrase string, connectSecret string) (*ssh.Client, *ssh.Session, io.WriteCloser, io.Reader, io.Reader, error) {
-	hostKeyCallback, err := knownHostsCallback()
+	client, err := DialClient(profile, secret, passphrase)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	config := &ssh.ClientConfig{
-		User:            profile.Username,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         15 * time.Second,
-	}
-
-	agentSignerCount := 0
-	switch profile.AuthKind {
-	case domain.AuthPassword:
-		config.Auth = []ssh.AuthMethod{ssh.Password(secret)}
-	case domain.AuthPrivateKey:
-		auth, err := privateKeyAuthMethod(profile, secret, passphrase)
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
-		config.Auth = []ssh.AuthMethod{auth}
-	case domain.AuthAgentFallbackKey:
-		authMethods, signerCount, usedFallback, err := agentFallbackAuthMethods(profile, secret, passphrase)
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
-		agentSignerCount = signerCount
-		config.Auth = authMethods
-		_ = usedFallback
-	case domain.AuthAgent:
-		auth, signerCount, err := agentAuthMethod()
-		if err != nil {
-			return nil, nil, nil, nil, nil, err
-		}
-		agentSignerCount = signerCount
-		config.Auth = []ssh.AuthMethod{auth}
-	default:
-		return nil, nil, nil, nil, nil, fmt.Errorf("connect currently supports password, agent, and private_key auth")
-	}
-
-	address := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
-	client, err := ssh.Dial("tcp", address, config)
-	if err != nil {
-		if profile.AuthKind == domain.AuthAgent {
-			return nil, nil, nil, nil, nil, fmt.Errorf("ssh-agent auth failed (%d keys loaded). Make sure the correct key is loaded with ssh-add and that the server accepts it: %w", agentSignerCount, err)
-		}
-		if profile.AuthKind == domain.AuthAgentFallbackKey {
-			return nil, nil, nil, nil, nil, fmt.Errorf("agent + fallback key auth failed (%d agent keys tried): %w", agentSignerCount, err)
-		}
-		if profile.AuthKind == domain.AuthPrivateKey {
-			return nil, nil, nil, nil, nil, fmt.Errorf("private key auth failed: %w", err)
-		}
 		return nil, nil, nil, nil, nil, err
 	}
 
@@ -432,6 +382,65 @@ func dial(profile domain.Profile, secret string, passphrase string, connectSecre
 	}
 
 	return client, session, stdin, stdout, stderr, nil
+}
+
+func DialClient(profile domain.Profile, secret string, passphrase string) (*ssh.Client, error) {
+	hostKeyCallback, err := knownHostsCallback()
+	if err != nil {
+		return nil, err
+	}
+
+	config := &ssh.ClientConfig{
+		User:            profile.Username,
+		HostKeyCallback: hostKeyCallback,
+		Timeout:         15 * time.Second,
+	}
+
+	agentSignerCount := 0
+	switch profile.AuthKind {
+	case domain.AuthPassword:
+		config.Auth = []ssh.AuthMethod{ssh.Password(secret)}
+	case domain.AuthPrivateKey:
+		auth, err := privateKeyAuthMethod(profile, secret, passphrase)
+		if err != nil {
+			return nil, err
+		}
+		config.Auth = []ssh.AuthMethod{auth}
+	case domain.AuthAgentFallbackKey:
+		authMethods, signerCount, usedFallback, err := agentFallbackAuthMethods(profile, secret, passphrase)
+		if err != nil {
+			return nil, err
+		}
+		agentSignerCount = signerCount
+		config.Auth = authMethods
+		_ = usedFallback
+	case domain.AuthAgent:
+		auth, signerCount, err := agentAuthMethod()
+		if err != nil {
+			return nil, err
+		}
+		agentSignerCount = signerCount
+		config.Auth = []ssh.AuthMethod{auth}
+	default:
+		return nil, fmt.Errorf("connect currently supports password, agent, and private_key auth")
+	}
+
+	address := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
+	client, err := ssh.Dial("tcp", address, config)
+	if err != nil {
+		if profile.AuthKind == domain.AuthAgent {
+			return nil, fmt.Errorf("ssh-agent auth failed (%d keys loaded). Make sure the correct key is loaded with ssh-add and that the server accepts it: %w", agentSignerCount, err)
+		}
+		if profile.AuthKind == domain.AuthAgentFallbackKey {
+			return nil, fmt.Errorf("agent + fallback key auth failed (%d agent keys tried): %w", agentSignerCount, err)
+		}
+		if profile.AuthKind == domain.AuthPrivateKey {
+			return nil, fmt.Errorf("private key auth failed: %w", err)
+		}
+		return nil, err
+	}
+
+	return client, nil
 }
 
 func agentAuthMethod() (ssh.AuthMethod, int, error) {

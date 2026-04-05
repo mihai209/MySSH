@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	appsvc "myssh/internal/app"
 	"myssh/internal/domain"
 	"myssh/internal/secret"
+	"myssh/internal/sftpclient"
 	"myssh/internal/sshclient"
 )
 
@@ -19,6 +21,7 @@ type App struct {
 	service      *appsvc.Service
 	secretStore  *secret.Store
 	sshManager   *sshclient.Manager
+	sftpManager  *sftpclient.Manager
 	dataDir      string
 	pendingHosts map[string]*sshclient.UnknownHostError
 }
@@ -49,6 +52,22 @@ type DashboardDTO struct {
 	SecurityHeadline string       `json:"securityHeadline"`
 }
 
+type SFTPFileDTO struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	IsDir    bool   `json:"isDir"`
+	Size     int64  `json:"size"`
+	Mode     string `json:"mode"`
+	Modified string `json:"modified"`
+}
+
+type SFTPDirectoryDTO struct {
+	SessionID string        `json:"sessionId"`
+	Path      string        `json:"path"`
+	Parent    string        `json:"parent"`
+	Entries   []SFTPFileDTO `json:"entries"`
+}
+
 type SaveProfileInput struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
@@ -67,6 +86,7 @@ func NewApp(service *appsvc.Service, secretStore *secret.Store, dataDir string) 
 	app := &App{
 		service:      service,
 		secretStore:  secretStore,
+		sftpManager:  sftpclient.NewManager(),
 		dataDir:      dataDir,
 		pendingHosts: map[string]*sshclient.UnknownHostError{},
 	}
@@ -289,29 +309,9 @@ func (a *App) ConnectProfile(id string) (string, error) {
 		return "", fmt.Errorf("profile not found")
 	}
 
-	secretValue := ""
-	if profile.AuthKind == domain.AuthPassword || ((profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourceContent) {
-		if profile.SecretRef == "" {
-			if profile.AuthKind == domain.AuthPassword {
-				return "", fmt.Errorf("password profile has no stored secret")
-			}
-			return "", fmt.Errorf("private key content profile has no stored secret")
-		}
-		secretValue, err = a.secretStore.Get(profile.SecretRef)
-		if err != nil {
-			if profile.AuthKind == domain.AuthPassword {
-				return "", fmt.Errorf("load password from keyring: %w", err)
-			}
-			return "", fmt.Errorf("load private key content from keyring: %w", err)
-		}
-	}
-
-	passphraseValue := ""
-	if profile.PassphraseRef != "" {
-		passphraseValue, err = a.secretStore.Get(profile.PassphraseRef)
-		if err != nil {
-			return "", fmt.Errorf("load key passphrase from keyring: %w", err)
-		}
+	secretValue, passphraseValue, err := a.loadProfileSecrets(profile)
+	if err != nil {
+		return "", err
 	}
 
 	connectSecretValue := ""
@@ -341,6 +341,40 @@ func (a *App) ConnectProfile(id string) (string, error) {
 
 	delete(a.pendingHosts, profile.ID)
 	return sessionID, nil
+}
+
+func (a *App) OpenSFTP(id string) (SFTPDirectoryDTO, error) {
+	profile, secretValue, passphraseValue, err := a.loadProfileByID(id)
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+
+	dir, err := a.sftpManager.Open(profile, secretValue, passphraseValue)
+	if err != nil {
+		var unknownHostErr *sshclient.UnknownHostError
+		if errors.As(err, &unknownHostErr) {
+			a.pendingHosts[profile.ID] = unknownHostErr
+		}
+		return SFTPDirectoryDTO{}, err
+	}
+
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) ListSFTP(sessionID string, path string) (SFTPDirectoryDTO, error) {
+	dir, err := a.sftpManager.List(strings.TrimSpace(sessionID), path)
+	if err != nil {
+		return SFTPDirectoryDTO{}, err
+	}
+	return toSFTPDirectoryDTO(dir), nil
+}
+
+func (a *App) DownloadSFTPFile(sessionID string, remotePath string) (string, error) {
+	return a.sftpManager.Download(strings.TrimSpace(sessionID), strings.TrimSpace(remotePath))
+}
+
+func (a *App) CloseSFTP(sessionID string) error {
+	return a.sftpManager.Close(strings.TrimSpace(sessionID))
 }
 
 func (a *App) ConnectLocalShell() (string, error) {
@@ -391,6 +425,58 @@ func (a *App) TrustPendingHost(sessionID string) error {
 	return nil
 }
 
+func (a *App) loadProfileByID(id string) (domain.Profile, string, string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return domain.Profile{}, "", "", fmt.Errorf("profile id is required")
+	}
+
+	profiles, err := a.service.ListProfiles()
+	if err != nil {
+		return domain.Profile{}, "", "", err
+	}
+
+	for _, item := range profiles {
+		if item.ID == id {
+			secretValue, passphraseValue, err := a.loadProfileSecrets(item)
+			return item, secretValue, passphraseValue, err
+		}
+	}
+
+	return domain.Profile{}, "", "", fmt.Errorf("profile not found")
+}
+
+func (a *App) loadProfileSecrets(profile domain.Profile) (string, string, error) {
+	secretValue := ""
+	if profile.AuthKind == domain.AuthPassword || ((profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourceContent) {
+		if profile.SecretRef == "" {
+			if profile.AuthKind == domain.AuthPassword {
+				return "", "", fmt.Errorf("password profile has no stored secret")
+			}
+			return "", "", fmt.Errorf("private key content profile has no stored secret")
+		}
+		value, err := a.secretStore.Get(profile.SecretRef)
+		if err != nil {
+			if profile.AuthKind == domain.AuthPassword {
+				return "", "", fmt.Errorf("load password from keyring: %w", err)
+			}
+			return "", "", fmt.Errorf("load private key content from keyring: %w", err)
+		}
+		secretValue = value
+	}
+
+	passphraseValue := ""
+	if profile.PassphraseRef != "" {
+		value, err := a.secretStore.Get(profile.PassphraseRef)
+		if err != nil {
+			return "", "", fmt.Errorf("load key passphrase from keyring: %w", err)
+		}
+		passphraseValue = value
+	}
+
+	return secretValue, passphraseValue, nil
+}
+
 func toProfileDTO(profile domain.Profile) ProfileDTO {
 	keyPathExists := false
 	if (profile.AuthKind == domain.AuthPrivateKey || profile.AuthKind == domain.AuthAgentFallbackKey) && profile.KeySource == domain.KeySourcePath && profile.KeyPath != "" {
@@ -413,5 +499,31 @@ func toProfileDTO(profile domain.Profile) ProfileDTO {
 		SecretRef:        profile.SecretRef,
 		HasPassphrase:    profile.HasPassphrase,
 		HasConnectSecret: profile.HasConnectSecret,
+	}
+}
+
+func toSFTPDirectoryDTO(dir sftpclient.Directory) SFTPDirectoryDTO {
+	parent := filepath.Dir(dir.Path)
+	if parent == "." || parent == dir.Path {
+		parent = ""
+	}
+
+	items := make([]SFTPFileDTO, 0, len(dir.Entries))
+	for _, entry := range dir.Entries {
+		items = append(items, SFTPFileDTO{
+			Name:     entry.Name,
+			Path:     entry.Path,
+			IsDir:    entry.IsDir,
+			Size:     entry.Size,
+			Mode:     entry.Mode,
+			Modified: entry.Modified,
+		})
+	}
+
+	return SFTPDirectoryDTO{
+		SessionID: dir.SessionID,
+		Path:      dir.Path,
+		Parent:    parent,
+		Entries:   items,
 	}
 }
