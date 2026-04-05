@@ -1,0 +1,57 @@
+name: Build MySSH
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build-myssh.yml"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - ".github/workflows/build-myssh.yml"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev \
+            xorg-dev
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+        run: go build -trimpath -ldflags="-s -w" -o dist/myssh ./cmd/myssh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: myssh-linux-amd64
+          path: dist/myssh
+          if-no-files-found: error
