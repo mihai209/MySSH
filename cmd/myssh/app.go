@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -31,6 +32,7 @@ type ProfileDTO struct {
 	AuthKind         string `json:"authKind"`
 	KeySource        string `json:"keySource,omitempty"`
 	KeyPath          string `json:"keyPath,omitempty"`
+	KeyPathExists    bool   `json:"keyPathExists"`
 	HasStoredSecret  bool   `json:"hasStoredSecret"`
 	SecretRef        string `json:"secretRef,omitempty"`
 	HasConnectSecret bool   `json:"hasConnectSecret"`
@@ -339,6 +341,13 @@ func (a *App) TrustPendingHost() error {
 }
 
 func toProfileDTO(profile domain.Profile) ProfileDTO {
+	keyPathExists := false
+	if profile.AuthKind == domain.AuthPrivateKey && profile.KeySource == domain.KeySourcePath && profile.KeyPath != "" {
+		if _, err := os.Stat(profile.KeyPath); err == nil {
+			keyPathExists = true
+		}
+	}
+
 	return ProfileDTO{
 		ID:               profile.ID,
 		Name:             profile.Name,
@@ -348,6 +357,7 @@ func toProfileDTO(profile domain.Profile) ProfileDTO {
 		AuthKind:         string(profile.AuthKind),
 		KeySource:        string(profile.KeySource),
 		KeyPath:          profile.KeyPath,
+		KeyPathExists:    keyPathExists,
 		HasStoredSecret:  profile.HasStoredSecret,
 		SecretRef:        profile.SecretRef,
 		HasConnectSecret: profile.HasConnectSecret,

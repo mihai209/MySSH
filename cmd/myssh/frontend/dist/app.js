@@ -226,9 +226,9 @@
     els.machineHost.textContent = profile.host || "-";
     els.machinePort.textContent = String(profile.port || 22);
     els.machineAuth.textContent = profile.authKind || "agent";
-    els.machineSecretState.textContent = profile.hasStoredSecret ? "stored in OS keyring" : profile.keyPath ? "key path reference" : "none";
+    els.machineSecretState.textContent = describeSecretState(profile);
     els.editProfile.disabled = false;
-    els.connectProfile.disabled = !(profile.authKind === "agent" || profile.authKind === "password" || profile.authKind === "private_key");
+    els.connectProfile.disabled = !canConnectProfile(profile);
   }
 
   function openCreateModal() {
@@ -337,8 +337,8 @@
 
   async function connectProfile() {
     const profile = state.profiles.find((item) => item.id === state.selectedId);
-    if (!profile || !(profile.authKind === "agent" || profile.authKind === "password" || profile.authKind === "private_key")) {
-      setStatus("Connect is currently available only for password, agent, and private key profiles.");
+    if (!profile || !canConnectProfile(profile)) {
+      setStatus(profile?.authKind === "private_key" ? "Private key path is missing or authentication is not ready." : "Connect is currently available only for password, agent, and private key profiles.");
       return;
     }
 
@@ -402,6 +402,41 @@
     }
 
     return els.secret.value;
+  }
+
+  function canConnectProfile(profile) {
+    if (!profile) {
+      return false;
+    }
+    if (profile.authKind === "agent" || profile.authKind === "password") {
+      return true;
+    }
+    if (profile.authKind !== "private_key") {
+      return false;
+    }
+    if (profile.keySource === "content") {
+      return Boolean(profile.hasStoredSecret);
+    }
+    if (profile.keySource === "path") {
+      return Boolean(profile.keyPath && profile.keyPathExists);
+    }
+    return false;
+  }
+
+  function describeSecretState(profile) {
+    if (!profile) {
+      return "none";
+    }
+    if (profile.authKind === "private_key" && profile.keySource === "path") {
+      return profile.keyPathExists ? "key path found" : "key path missing";
+    }
+    if (profile.hasStoredSecret) {
+      return "stored in OS keyring";
+    }
+    if (profile.keyPath) {
+      return "key path reference";
+    }
+    return "none";
   }
 
   function setStatus(message, isError) {
