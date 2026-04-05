@@ -476,7 +476,7 @@ button:disabled {
 .terminal-output {
   flex: 1;
   margin: 0;
-  padding: 10px;
+  padding: 0;
   border-radius: 22px;
   background: rgba(5, 11, 18, 0.94);
   border: 1px solid rgba(79, 179, 255, 0.12);
@@ -491,11 +491,12 @@ button:disabled {
 }
 
 .terminal-output .xterm {
-  padding: 2px 4px;
+  height: 100%;
+  padding: 10px 12px;
 }
 
 .terminal-output .xterm-rows {
-  line-height: 1.12 !important;
+  line-height: 1 !important;
 }
 
 .terminal-output .xterm-screen canvas {

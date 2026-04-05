@@ -8,6 +8,7 @@
     terminal: null,
     fitAddon: null,
     webglAddon: null,
+    webglEnabled: false,
   };
 
   const els = {};
@@ -77,6 +78,7 @@
     els.terminalTrustCopy = document.getElementById("terminal-trust-copy");
     els.terminalTrustButton = document.getElementById("terminal-trust-button");
     els.terminalContainer = document.getElementById("terminal-container");
+    els.terminalGpuToggle = document.getElementById("terminal-gpu-toggle");
     els.terminalBack = document.getElementById("terminal-back");
   }
 
@@ -94,6 +96,7 @@
     els.keySource.addEventListener("change", updateSecurityCopy);
     els.terminalBack.addEventListener("click", closeTerminal);
     els.terminalTrustButton.addEventListener("click", trustPendingHost);
+    els.terminalGpuToggle.addEventListener("click", toggleTerminalGpu);
     els.modalBackdrop.addEventListener("click", (event) => {
       if (event.target === els.modalBackdrop) {
         closeModal();
@@ -107,6 +110,7 @@
     }
 
     window.addEventListener("resize", debounceResizeTerminal);
+    updateGpuButton();
   }
 
   async function bootstrap() {
@@ -493,9 +497,10 @@
       cursorBlink: true,
       fontFamily: "DejaVu Sans Mono, Cascadia Mono, Fira Code, monospace",
       fontSize: 13,
-      lineHeight: 1.12,
+      lineHeight: 1.0,
       letterSpacing: 0,
       customGlyphs: false,
+      allowTransparency: false,
       theme: {
         background: "#050b12",
         foreground: "#d7e8f7",
@@ -508,15 +513,8 @@
 
     state.fitAddon = new window.FitAddon.FitAddon();
     state.terminal.loadAddon(state.fitAddon);
-    if (window.WebglAddon?.WebglAddon) {
-      try {
-        state.webglAddon = new window.WebglAddon.WebglAddon();
-        state.terminal.loadAddon(state.webglAddon);
-      } catch (_) {
-        state.webglAddon = null;
-      }
-    }
     state.terminal.open(els.terminalContainer);
+    tryEnableWebgl();
     fitTerminal();
     window.setTimeout(() => fitTerminal(), 50);
 
@@ -539,6 +537,56 @@
     const cols = state.terminal.cols;
     const rows = state.terminal.rows;
     window.go.main.App.ResizeTerminal(cols, rows).catch(() => {});
+  }
+
+  function tryEnableWebgl() {
+    if (!state.webglEnabled) {
+      return;
+    }
+    if (!window.WebglAddon?.WebglAddon) {
+      return;
+    }
+    if (state.webglAddon) {
+      return;
+    }
+
+    try {
+      state.webglAddon = new window.WebglAddon.WebglAddon();
+      state.terminal.loadAddon(state.webglAddon);
+    } catch (_) {
+      state.webglAddon = null;
+      state.webglEnabled = false;
+    }
+    updateGpuButton();
+  }
+
+  function toggleTerminalGpu() {
+    state.webglEnabled = !state.webglEnabled;
+
+    if (!state.terminal) {
+      updateGpuButton();
+      return;
+    }
+
+    if (!state.webglEnabled && state.webglAddon) {
+      try {
+        state.webglAddon.dispose();
+      } catch (_) {
+        // ignore dispose errors
+      }
+      state.webglAddon = null;
+    }
+
+    if (state.webglEnabled) {
+      tryEnableWebgl();
+    }
+
+    updateGpuButton();
+    fitTerminal();
+  }
+
+  function updateGpuButton() {
+    els.terminalGpuToggle.textContent = state.webglEnabled ? "GPU On" : "GPU Off";
   }
 
   function debounceResizeTerminal() {
